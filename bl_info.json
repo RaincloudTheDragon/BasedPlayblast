@@ -4,8 +4,8 @@
     "version": [0, 1, 0],
     "blender": [4, 3, 2],
     "location": "Properties > Output > Playblast",
-    "description": "Create high-quality playblasts from Blender",
+    "description": "Easily create playblasts from Blender",
     "warning": "",
-    "doc_url": "",
+    "doc_url": "https://github.com/RaincloudTheDragon/BasedPlayblast",
     "category": "Animation"
 } 

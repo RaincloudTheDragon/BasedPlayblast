@@ -4,9 +4,9 @@ bl_info = {
     "version": (0, 1, 1),
     "blender": (4, 3, 2),
     "location": "Properties > Output > BasedPlayblast",
-    "description": "Create high-quality playblasts from Blender",
+    "description": "Easily create playblasts from Blender",
     "warning": "",
-    "doc_url": "",
+    "doc_url": "https://github.com/RaincloudTheDragon/BasedPlayblast",
     "category": "Animation",
 }
 
@@ -14,11 +14,9 @@ import bpy
 import os
 import subprocess
 import sys
-import shutil
 import tempfile
-from bpy.props import (StringProperty, BoolProperty, IntProperty, FloatProperty,
-                       EnumProperty, PointerProperty)
-from bpy.types import (Panel, Operator, AddonPreferences, PropertyGroup)
+from bpy.props import (StringProperty, BoolProperty, IntProperty, EnumProperty, PointerProperty)
+from bpy.types import (Panel, Operator, PropertyGroup)
 
 # Helper function to get file extension based on video format
 def get_file_extension(video_format):
