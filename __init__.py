@@ -1,7 +1,7 @@
 bl_info = {
     "name": "BasedPlayblast",
     "author": "RaincloudTheDragon",
-    "version": (0, 1, 1),
+    "version": (0, 2, 0),
     "blender": (4, 4, 0),
     "location": "Properties > Output > BasedPlayblast",
     "description": "Easily create playblasts from Blender",
@@ -15,8 +15,10 @@ import os
 import subprocess
 import sys
 import tempfile
-from bpy.props import (StringProperty, BoolProperty, IntProperty, EnumProperty, PointerProperty) # type: ignore
+import glob  # Add missing import
+from bpy.props import (StringProperty, BoolProperty, IntProperty, EnumProperty, PointerProperty, FloatProperty) # type: ignore
 from bpy.types import (Panel, Operator, PropertyGroup) # type: ignore
+import time
 
 # Pre-defined items lists for EnumProperties
 RESOLUTION_MODE_ITEMS = [
@@ -110,7 +112,7 @@ class BPLProperties(PropertyGroup):
     output_path: StringProperty(  # type: ignore
         name="Output Path",
         description="Path to save the playblast",
-        default="//playblast/",
+        default="//blast/",
         subtype='DIR_PATH'
     )
     
@@ -314,107 +316,239 @@ class BPLProperties(PropertyGroup):
         description="Custom FFmpeg command line arguments (for advanced users)",
         default="-preset medium -crf 23"
     )
+    
+    is_rendering: BoolProperty(  # type: ignore
+        name="Is Rendering",
+        default=False
+    )
+    
+    render_progress: FloatProperty(  # type: ignore
+        name="Render Progress",
+        default=0.0,
+        min=0.0,
+        max=100.0,
+        subtype='PERCENTAGE'
+    )
+    
+    status_message: StringProperty(  # type: ignore
+        name="Status Message",
+        default=""
+    )
 
 # Main Operator
 class BPL_OT_create_playblast(Operator):
     bl_idname = "bpl.create_playblast"
     bl_label = "Create Playblast"
     bl_description = "Create a playblast of the current scene"
-    bl_options = {'REGISTER', 'UNDO'}
+    bl_options = {'REGISTER', 'UNDO', 'BLOCKING'}
     
-    def execute(self, context):
+    _timer = None
+    _area = None
+    _space = None
+    _region_3d = None
+    _original_settings = None
+    _original_shading = None
+    _original_overlays = None
+    _original_view_perspective = None
+    _original_use_local_camera = None
+    _phase = 'SETUP'  # SETUP, RENDER, ENCODE, COMPLETE
+    _last_reported_frame = 0
+    _frame_start = 0
+    _frame_end = 0
+    _current_frame = 0
+    
+    def modal(self, context, event):
+        if event.type == 'ESC':
+            context.window_manager.event_timer_remove(self._timer)
+            bpy.ops.render.render('INVOKE_DEFAULT', animation=False)  # This cancels the render
+            self.cleanup(context)
+            return {'CANCELLED'}
+        
+        if event.type == 'TIMER':
+            props = context.scene.basedplayblast
+            
+            if self._phase == 'SETUP':
+                props.render_progress = 0.0
+                props.status_message = "Setting up playblast..."
+                props.is_rendering = True
+                self._phase = 'RENDER'
+                
+                # Start the render
+                override = context.copy()
+                override["area"] = self._area
+                override["region"] = [r for r in self._area.regions if r.type == 'WINDOW'][0]
+                with context.temp_override(**override):
+                    bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True, sequencer=False, write_still=False, view_context=True)
+                
+                # Force redraw of UI
+                for area in context.screen.areas:
+                    if area.type == 'PROPERTIES':
+                        area.tag_redraw()
+                
+                return {'PASS_THROUGH'}
+            
+            elif self._phase == 'RENDER':
+                # Get current frame and calculate progress
+                current_frame = context.scene.frame_current
+                
+                # Check if frame has changed since last time
+                if current_frame != self._last_reported_frame:
+                    self._last_reported_frame = current_frame
+                    total_frames = self._frame_end - self._frame_start + 1
+                    
+                    # Calculate progress based on current frame
+                    if current_frame >= self._frame_start:
+                        frame_progress = current_frame - self._frame_start
+                        progress = min((frame_progress / total_frames) * 100, 100)
+                        
+                        # Update properties
+                        props.render_progress = progress
+                        props.status_message = f"Rendering frame {current_frame}/{self._frame_end} ({int(progress)}%)"
+                        print(f"Progress update: frame {current_frame}, progress {int(progress)}%")
+                        
+                        # Force UI redraw
+                        for area in context.screen.areas:
+                            if area.type == 'PROPERTIES':
+                                area.tag_redraw()
+                
+                # Force all 3D viewports to update
+                for area in context.screen.areas:
+                    if area.type == 'VIEW_3D':
+                        area.tag_redraw()
+                
+                # Check if output file exists and has expected size to determine completion
+                file_ext = get_file_extension(context.scene.basedplayblast.video_format)
+                output_path = bpy.path.abspath(context.scene.render.filepath)
+                full_path = output_path + file_ext
+                
+                # When playhead loops back to first frame after rendering all frames
+                # or if the output file exists and seems complete, consider rendering done
+                if (current_frame == self._frame_start and self._last_reported_frame >= self._frame_end) or os.path.exists(full_path):
+                    # If we've seen the last frame or the file exists, consider it done
+                    print(f"Detected playblast completion - Output file exists: {os.path.exists(full_path)}")
+                    self._phase = 'COMPLETE'
+                    props.render_progress = 100.0
+                    props.status_message = "Finalizing output..."
+                    
+                    # Force UI redraw
+                    for area in context.screen.areas:
+                        if area.type == 'PROPERTIES':
+                            area.tag_redraw()
+                
+                # Also check direct frame count for completion (traditional method)
+                elif current_frame >= self._frame_end:
+                    self._phase = 'COMPLETE'
+                    props.render_progress = 100.0
+                    props.status_message = "Finalizing output..."
+                    
+                    # Force UI redraw
+                    for area in context.screen.areas:
+                        if area.type == 'PROPERTIES':
+                            area.tag_redraw()
+            
+            elif self._phase == 'COMPLETE':
+                props.render_progress = 0.0
+                props.status_message = ""
+                props.is_rendering = False
+                context.window_manager.event_timer_remove(self._timer)
+                self.finish(context)
+                
+                # Force UI redraw
+                for area in context.screen.areas:
+                    if area.type == 'PROPERTIES':
+                        area.tag_redraw()
+                
+                return {'FINISHED'}
+        
+        return {'PASS_THROUGH'}
+    
+    def invoke(self, context, event):
         scene = context.scene
         props = scene.basedplayblast
         
-        # Store original render settings
-        original_path = scene.render.filepath
-        original_x = scene.render.resolution_x
-        original_y = scene.render.resolution_y
-        original_percentage = scene.render.resolution_percentage
-        original_file_format = scene.render.image_settings.file_format
-        original_color_mode = scene.render.image_settings.color_mode
-        original_use_file_extension = scene.render.use_file_extension
-        original_use_overwrite = scene.render.use_overwrite
-        original_use_placeholder = scene.render.use_placeholder
-        original_frame_start = scene.frame_start
-        original_frame_end = scene.frame_end
-        original_camera = scene.camera
+        # Initialize phase
+        self._phase = 'SETUP'
+        self._last_reported_frame = 0
         
-        # Store original stamp settings
-        original_use_stamp = scene.render.use_stamp
-        if original_use_stamp:
-            original_stamp_note_text = scene.render.stamp_note_text
-            original_stamp_font_size = scene.render.stamp_font_size
+        # Store frame range
+        self._frame_start = scene.frame_start if props.use_scene_frame_range else props.start_frame
+        self._frame_end = scene.frame_end if props.use_scene_frame_range else props.end_frame
+        self._current_frame = scene.frame_current
         
-        # Store original viewport settings
-        space = None
-        original_shading = None
-        original_overlays = None
-        original_view_perspective = None
-        original_use_local_camera = None
-        original_region_3d = None
+        # Store original settings
+        self._original_settings = {
+            'filepath': scene.render.filepath,
+            'resolution_x': scene.render.resolution_x,
+            'resolution_y': scene.render.resolution_y,
+            'resolution_percentage': scene.render.resolution_percentage,
+            'use_file_extension': scene.render.use_file_extension,
+            'use_overwrite': scene.render.use_overwrite,
+            'use_placeholder': scene.render.use_placeholder,
+            'camera': scene.camera,
+            'image_settings': {
+                'file_format': scene.render.image_settings.file_format,
+                'color_mode': scene.render.image_settings.color_mode
+            },
+            'display_mode': context.preferences.view.render_display_type,
+            # Store metadata settings
+            'use_stamp': scene.render.use_stamp,
+            'use_stamp_date': scene.render.use_stamp_date,
+            'use_stamp_time': scene.render.use_stamp_time,
+            'use_stamp_frame': scene.render.use_stamp_frame,
+            'use_stamp_camera': scene.render.use_stamp_camera,
+            'use_stamp_lens': scene.render.use_stamp_lens,
+            'use_stamp_scene': scene.render.use_stamp_scene,
+            'use_stamp_note': scene.render.use_stamp_note,
+            'stamp_note_text': scene.render.stamp_note_text
+        }
+        
+        # Set render display type to NONE to hide render window
+        context.preferences.view.render_display_type = 'NONE'
         
         # Find a 3D view
-        area = None
         for a in context.screen.areas:
             if a.type == 'VIEW_3D':
-                area = a
-                space = a.spaces.active
-                original_shading = space.shading.type
-                original_overlays = space.overlay.show_overlays
-                
-                # Store view settings
-                for region in area.regions:
+                self._area = a
+                self._space = a.spaces.active
+                for region in a.regions:
                     if region.type == 'WINDOW':
-                        original_region_3d = region.data
-                        if original_region_3d:
-                            original_view_perspective = original_region_3d.view_perspective
-                            if hasattr(original_region_3d, 'use_local_camera'):
-                                original_use_local_camera = original_region_3d.use_local_camera
+                        region_3d = region.data
+                        if region_3d:
+                            self._region_3d = region_3d
+                            self._original_view_perspective = region_3d.view_perspective
+                            if hasattr(region_3d, 'use_local_camera'):
+                                self._original_use_local_camera = region_3d.use_local_camera
                         break
                 break
         
-        if not area:
+        if not self._area or not self._space:
             self.report({'ERROR'}, "No 3D viewport found")
             return {'CANCELLED'}
         
+        # Store viewport settings
+        self._original_shading = self._space.shading.type
+        self._original_overlays = self._space.overlay.show_overlays
+        
         try:
             # Set resolution based on mode
-            if props.resolution_mode == 'SCENE':
-                # Use scene resolution
-                pass  # We'll keep the scene's resolution
-            elif props.resolution_mode == 'PRESET':
-                # Parse the preset string to get resolution
+            if props.resolution_mode == 'PRESET':
                 preset = props.resolution_preset
                 x_str = preset.split('y')[0].replace('x', '')
                 y_str = preset.split('y')[1]
                 scene.render.resolution_x = int(x_str)
                 scene.render.resolution_y = int(y_str)
-            else:  # CUSTOM
+            elif props.resolution_mode == 'CUSTOM':
                 scene.render.resolution_x = props.resolution_x
                 scene.render.resolution_y = props.resolution_y
             
-            # Set resolution percentage
             scene.render.resolution_percentage = props.resolution_percentage
             
-            # Set frame range
-            if props.use_scene_frame_range:
-                start_frame = scene.frame_start
-                end_frame = scene.frame_end
-            else:
-                # Temporarily change scene frame range
-                scene.frame_start = props.start_frame
-                scene.frame_end = props.end_frame
-                start_frame = props.start_frame
-                end_frame = props.end_frame
-            
-            # Create output directory if it doesn't exist
+            # Create output directory
             output_dir = bpy.path.abspath(props.output_path)
             os.makedirs(output_dir, exist_ok=True)
             
-            # Set output path - ensure it has no file extension as Blender will add it
+            # Set output path
             file_name = props.file_name
-            # Remove any existing extension if present
             if '.' in file_name:
                 file_name = os.path.splitext(file_name)[0]
             scene.render.filepath = os.path.join(output_dir, file_name)
@@ -423,8 +557,6 @@ class BPL_OT_create_playblast(Operator):
             scene.render.image_settings.file_format = 'FFMPEG'
             scene.render.ffmpeg.format = props.video_format
             scene.render.ffmpeg.codec = props.video_codec
-            
-            # Apply quality settings (custom FFmpeg args will be handled separately)
             scene.render.ffmpeg.constant_rate_factor = props.video_quality
             
             # Audio settings
@@ -434,200 +566,153 @@ class BPL_OT_create_playblast(Operator):
             else:
                 scene.render.ffmpeg.audio_codec = 'NONE'
             
-            # If using custom FFmpeg args, we'll need to run ffmpeg manually after the OpenGL render
-            use_custom_args = props.use_custom_ffmpeg_args and props.custom_ffmpeg_args
-            
             # Set camera if specified
             if not props.use_active_camera and props.camera_object != "NONE":
                 camera_obj = context.scene.objects.get(props.camera_object)
                 if camera_obj and camera_obj.type == 'CAMERA':
                     scene.camera = camera_obj
             
-            # Override to ensure we're using the 3D view we found
-            override = context.copy()
-            override["area"] = area
-            override["region"] = [r for r in area.regions if r.type == 'WINDOW'][0]
-            
-            # Set viewport display mode
-            if space:
-                # Force a redraw to ensure settings are applied
-                context.view_layer.update()
-                
-                # Set shading type according to display_mode
-                if space.shading.type != props.display_mode:
-                    space.shading.type = props.display_mode
-                    
-                # Set overlay visibility
-                if props.auto_disable_overlays and space.overlay.show_overlays:
-                    space.overlay.show_overlays = False
-                
-                # Switch to camera view
-                for region in area.regions:
-                    if region.type == 'WINDOW':
-                        region_3d = region.data
-                        if region_3d:
-                            if region_3d.view_perspective != 'CAMERA':
-                                region_3d.view_perspective = 'CAMERA'
-                            if hasattr(region_3d, 'use_local_camera'):
-                                region_3d.use_local_camera = False
-                        break
-                
-                # Force another redraw to ensure camera view is active
-                context.view_layer.update()
-                bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
-            
-            # Add metadata if enabled
+            # Setup metadata
             if props.show_metadata:
                 scene.render.use_stamp = True
                 scene.render.use_stamp_date = props.metadata_date
-                scene.render.use_stamp_time = props.metadata_date  # Use same setting as date
+                scene.render.use_stamp_time = props.metadata_date  # Usually linked with date
                 scene.render.use_stamp_frame = props.metadata_frame
-                scene.render.use_stamp_scene = props.metadata_scene
                 scene.render.use_stamp_camera = props.metadata_camera
                 scene.render.use_stamp_lens = props.metadata_lens
+                scene.render.use_stamp_scene = props.metadata_scene
                 
-                # Set note text if provided
+                # Set note if provided
                 if props.metadata_note:
                     scene.render.use_stamp_note = True
-                    scene.render.stamp_note_text = props.metadata_note
-                
-                try:
-                    scene.render.use_stamp_sequencer_strip = False
-                except:
-                    pass
-                
-                if props.metadata_resolution:
-                    res_x = scene.render.resolution_x * scene.render.resolution_percentage // 100
-                    res_y = scene.render.resolution_y * scene.render.resolution_percentage // 100
-                    try:
-                        scene.render.stamp_note_text += f" | {res_x}x{res_y}"
-                    except:
-                        pass
+                    
+                    # Build the note text
+                    note = props.metadata_note
+                    
+                    # Add resolution info if enabled
+                    if props.metadata_resolution:
+                        res_x = scene.render.resolution_x * (scene.render.resolution_percentage / 100.0)
+                        res_y = scene.render.resolution_y * (scene.render.resolution_percentage / 100.0)
+                        note += f"\nResolution: {int(res_x)} x {int(res_y)}"
+                    
+                    scene.render.stamp_note_text = note
             else:
                 scene.render.use_stamp = False
             
-            # Calculate total frames for progress reporting
-            total_frames = end_frame - start_frame + 1
-            
-            # Set up progress reporting
-            wm = context.window_manager
-            wm.progress_begin(0, total_frames)
-            
-            # Render the animation using the override context
-            with context.temp_override(**override):
-                bpy.ops.render.opengl(animation=True, sequencer=False, write_still=False, view_context=True)
-            
-            # End progress reporting
-            wm.progress_end()
-            
-            # Get the file extension
-            file_ext = get_file_extension(props.video_format)
-            
-            # Find the actual output file
-            import glob
-            all_files = glob.glob(os.path.join(output_dir, "*" + file_ext))
-            if all_files:
-                # Get the most recently modified file
-                latest_file = max(all_files, key=os.path.getmtime)
-                self.report({'INFO'}, f"Playblast saved as: {os.path.basename(latest_file)}")
-                # Store the path for the view_playblast operator
-                props.last_playblast_file = latest_file
+            # Set viewport display mode
+            if self._space:
+                # Set shading type according to display_mode
+                if self._space.shading.type != props.display_mode:
+                    self._space.shading.type = props.display_mode
+                    
+                # Set overlay visibility
+                if props.auto_disable_overlays:
+                    self._space.overlay.show_overlays = False
                 
-                # If using custom FFmpeg args, run ffmpeg manually
-                if use_custom_args:
-                    try:
-                        import subprocess
-                        import tempfile
-                        
-                        # Create a temporary file for the output
-                        temp_output = os.path.join(tempfile.gettempdir(), f"custom_ffmpeg_output{file_ext}")
-                        
-                        # Build the ffmpeg command
-                        ffmpeg_cmd = ["ffmpeg", "-y", "-i", latest_file]
-                        # Add the custom args
-                        ffmpeg_cmd.extend(props.custom_ffmpeg_args.split())
-                        # Add the output file
-                        ffmpeg_cmd.append(temp_output)
-                        
-                        # Run ffmpeg
-                        self.report({'INFO'}, f"Running custom FFmpeg command: {' '.join(ffmpeg_cmd)}")
-                        subprocess.run(ffmpeg_cmd, check=True)
-                        
-                        # Replace the original file with the processed one
-                        import shutil
-                        shutil.move(temp_output, latest_file)
-                        
-                        self.report({'INFO'}, f"Custom FFmpeg processing completed successfully")
-                    except Exception as e:
-                        self.report({'ERROR'}, f"Error processing with custom FFmpeg args: {str(e)}")
-            else:
-                self.report({'INFO'}, f"Playblast saved to {output_dir}")
-                props.last_playblast_file = ""
+                # Switch to camera view if needed
+                if self._region_3d and self._region_3d.view_perspective != 'CAMERA':
+                    self._region_3d.view_perspective = 'CAMERA'
+                    if hasattr(self._region_3d, 'use_local_camera'):
+                        self._region_3d.use_local_camera = False
+            
+            # Create override context
+            override = context.copy()
+            override["area"] = self._area
+            override["region"] = [r for r in self._area.regions if r.type == 'WINDOW'][0]
+            
+            # Start progress bar
+            context.window_manager.progress_begin(0, 1.0)
+            
+            # Add timer for modal - update every 0.1 seconds for more frequent updates
+            self._timer = context.window_manager.event_timer_add(0.1, window=context.window)
+            context.window_manager.modal_handler_add(self)
+            
+            return {'RUNNING_MODAL'}
             
         except Exception as e:
             self.report({'ERROR'}, f"Error creating playblast: {str(e)}")
+            self.cleanup(context)
             return {'CANCELLED'}
+    
+    def finish(self, context):
+        scene = context.scene
+        props = scene.basedplayblast
         
-        finally:
-            # Restore original settings
-            scene.render.filepath = original_path
-            scene.render.resolution_x = original_x
-            scene.render.resolution_y = original_y
-            scene.render.resolution_percentage = original_percentage
-            scene.render.image_settings.file_format = original_file_format
-            scene.render.image_settings.color_mode = original_color_mode
-            scene.render.use_file_extension = original_use_file_extension
-            scene.render.use_overwrite = original_use_overwrite
-            scene.render.use_placeholder = original_use_placeholder
-            scene.camera = original_camera
+        # Find and open the output file
+        file_ext = get_file_extension(props.video_format)
+        output_dir = bpy.path.abspath(props.output_path)
+        all_files = glob.glob(os.path.join(output_dir, "*" + file_ext))
+        if all_files:
+            latest_file = max(all_files, key=os.path.getmtime)
+            props.last_playblast_file = latest_file
             
-            # Restore stamp settings
-            scene.render.use_stamp = original_use_stamp
-            if original_use_stamp:
-                try:
-                    scene.render.stamp_note_text = original_stamp_note_text
-                    scene.render.stamp_font_size = original_stamp_font_size
-                except:
-                    pass
-            
-            # Restore frame range if we changed it
-            if not props.use_scene_frame_range:
-                scene.frame_start = original_frame_start
-                scene.frame_end = original_frame_end
-            
-            # Restore viewport settings
-            if space:
-                space.shading.type = original_shading
-                space.overlay.show_overlays = original_overlays
-                
-                # Restore view settings
-                if original_region_3d:
-                    for region in area.regions:
-                        if region.type == 'WINDOW':
-                            region_3d = region.data
-                            if region_3d:
-                                region_3d.view_perspective = original_view_perspective
-                                if hasattr(region_3d, 'use_local_camera') and original_use_local_camera is not None:
-                                    region_3d.use_local_camera = original_use_local_camera
-                            break
-        
-        # Play the animation immediately after creating it - just like in the original script
-        if props.last_playblast_file:
-            # Report which file we're playing
-            self.report({'INFO'}, f"Opening playblast externally: {os.path.basename(props.last_playblast_file)}")
-            
-            # Open the file with the default system application
             try:
                 if sys.platform == 'win32':
-                    os.startfile(props.last_playblast_file)
-                elif sys.platform == 'darwin':  # macOS
-                    subprocess.call(('open', props.last_playblast_file))
-                else:  # Linux and other Unix-like
-                    subprocess.call(('xdg-open', props.last_playblast_file))
+                    os.startfile(latest_file)
+                elif sys.platform == 'darwin':
+                    subprocess.call(('open', latest_file))
+                else:
+                    subprocess.call(('xdg-open', latest_file))
             except Exception as e:
                 self.report({'ERROR'}, f"Failed to open playblast: {str(e)}")
         
-        return {'FINISHED'}
+        self.cleanup(context)
+    
+    def cleanup(self, context):
+        # Reset progress properties
+        props = context.scene.basedplayblast
+        props.is_rendering = False
+        props.render_progress = 0.0
+        props.status_message = ""
+        
+        # End progress bar if it's still running
+        context.window_manager.progress_end()
+        
+        # Remove timer if it exists
+        if self._timer is not None:
+            context.window_manager.event_timer_remove(self._timer)
+        
+        # Restore viewport settings
+        if self._space:
+            self._space.shading.type = self._original_shading
+            self._space.overlay.show_overlays = self._original_overlays
+            
+            # Restore view settings
+            if self._region_3d:
+                if self._original_view_perspective:
+                    self._region_3d.view_perspective = self._original_view_perspective
+                if self._original_use_local_camera is not None:
+                    self._region_3d.use_local_camera = self._original_use_local_camera
+        
+        # Restore render settings
+        if self._original_settings:
+            scene = context.scene
+            scene.render.filepath = self._original_settings['filepath']
+            scene.render.resolution_x = self._original_settings['resolution_x']
+            scene.render.resolution_y = self._original_settings['resolution_y']
+            scene.render.resolution_percentage = self._original_settings['resolution_percentage']
+            scene.render.use_file_extension = self._original_settings['use_file_extension']
+            scene.render.use_overwrite = self._original_settings['use_overwrite']
+            scene.render.use_placeholder = self._original_settings['use_placeholder']
+            scene.camera = self._original_settings['camera']
+            scene.render.image_settings.file_format = self._original_settings['image_settings']['file_format']
+            scene.render.image_settings.color_mode = self._original_settings['image_settings']['color_mode']
+            context.preferences.view.render_display_type = self._original_settings['display_mode']
+            
+            # Restore metadata settings
+            scene.render.use_stamp = self._original_settings['use_stamp']
+            scene.render.use_stamp_date = self._original_settings['use_stamp_date']
+            scene.render.use_stamp_time = self._original_settings['use_stamp_time']
+            scene.render.use_stamp_frame = self._original_settings['use_stamp_frame']
+            scene.render.use_stamp_camera = self._original_settings['use_stamp_camera']
+            scene.render.use_stamp_lens = self._original_settings['use_stamp_lens']
+            scene.render.use_stamp_scene = self._original_settings['use_stamp_scene']
+            scene.render.use_stamp_note = self._original_settings['use_stamp_note']
+            scene.render.stamp_note_text = self._original_settings['stamp_note_text']
+        
+        # Force a redraw to ensure viewport updates
+        for area in context.screen.areas:
+            area.tag_redraw()
 
 # View Playblast Operator
 class BPL_OT_view_playblast(Operator):
@@ -765,11 +850,11 @@ class BPL_OT_sync_file_name(Operator):
         
         # If file_name is empty, use a default
         if not file_name:
-            file_name = "plyblst_"
+            file_name = "blast_"
         else:
-            # Add the plyblst_ prefix if it's not already there
-            if not file_name.startswith("plyblst_"):
-                file_name = "plyblst_" + file_name
+            # Add the blast_ prefix if it's not already there
+            if not file_name.startswith("blast_"):
+                file_name = "blast_" + file_name
         
         # Set the BasedPlayblast file name
         scene.basedplayblast.file_name = file_name
@@ -800,6 +885,12 @@ class BPL_PT_main_panel(Panel):
         row.scale_y = 1.5
         row.operator("bpl.create_playblast", text="PLAYBLAST", icon='RENDER_ANIMATION')
         row.operator("bpl.view_playblast", text="VIEW", icon='PLAY')
+        
+        # Show progress if rendering
+        if props.is_rendering:
+            box = layout.box()
+            box.label(text=props.status_message)
+            box.prop(props, "render_progress", text="Progress", slider=True)
         
         # Output settings - always visible
         box = layout.box()
