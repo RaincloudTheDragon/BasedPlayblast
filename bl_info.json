@@ -1,7 +1,7 @@
 {
     "name": "BasedPlayblast",
     "author": "RaincloudTheDragon",
-    "version": [0, 1, 0],
+    "version": [0, 1, 1],
     "blender": [4, 3, 2],
     "location": "Properties > Output > Playblast",
     "description": "Easily create playblasts from Blender",
