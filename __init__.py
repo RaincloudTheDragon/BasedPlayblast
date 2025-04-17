@@ -1,7 +1,7 @@
 bl_info = {
     "name": "BasedPlayblast",
     "author": "RaincloudTheDragon",
-    "version": (0, 2, 2),
+    "version": (0, 2, 3),
     "blender": (4, 4, 1),
     "location": "Properties > Output > BasedPlayblast",
     "description": "Easily create playblasts from Blender",
@@ -1127,7 +1127,15 @@ class BPL_OT_install_update(Operator):
         success = updater.download_and_install_update()
         
         if success:
-            self.report({'INFO'}, f"Successfully updated to version {updater.UpdaterState.update_version}")  # type: ignore
+            self.report({'INFO'}, f"Successfully updated to version {updater.UpdaterState.update_version}. For best results, please restart Blender.")  # type: ignore
+            # Show a popup message recommending restart
+            def draw_restart_message(self, context):
+                layout = self.layout
+                layout.label(text=f"BasedPlayblast updated to version {updater.UpdaterState.update_version}")  # type: ignore
+                layout.label(text="While the addon has been reloaded, for best results")
+                layout.label(text="please save your work and restart Blender.")
+                
+            bpy.context.window_manager.popup_menu(draw_restart_message, title="Update Complete", icon='INFO')
             return {'FINISHED'}
         else:
             self.report({'ERROR'}, f"Error installing update: {updater.UpdaterState.error_message}")  # type: ignore

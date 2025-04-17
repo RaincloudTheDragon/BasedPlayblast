@@ -8,6 +8,8 @@ import json
 from bpy.app.handlers import persistent  # type: ignore
 import threading
 import time
+import importlib  # For reloading modules
+import sys  # For module inspection
 
 # Updater configuration
 GITHUB_REPO = "RaincloudTheDragon/BasedPlayblast"
@@ -159,8 +161,33 @@ def download_and_install_update():
         # Clean up
         shutil.rmtree(temp_dir)
         
-        # Mark for reload
-        bpy.ops.script.reload()
+        # Reload modules to ensure changes take effect in the current session
+        try:
+            print("Reloading addon modules...")
+            # Get the module name of the main addon
+            addon_name = __name__.split('.')[0]
+            print(f"Main addon module name: {addon_name}")
+            
+            # Reload the main module and all submodules
+            modules_to_reload = [m for m in sys.modules.keys() if m.startswith(addon_name)]
+            print(f"Modules to reload: {modules_to_reload}")
+            
+            # First attempt to reload the main module
+            if addon_name in sys.modules:
+                importlib.reload(sys.modules[addon_name])
+            
+            # Then reload all submodules
+            for module_name in modules_to_reload:
+                if module_name in sys.modules and module_name != addon_name:
+                    print(f"Reloading module: {module_name}")
+                    importlib.reload(sys.modules[module_name])
+            
+            # Force reload scripts in Blender too
+            print("Reloading Blender scripts...")
+            bpy.ops.script.reload()
+        except Exception as e:
+            print(f"Error during module reloading: {e}")
+            # This is non-fatal, continue anyway
         
         return True
     
