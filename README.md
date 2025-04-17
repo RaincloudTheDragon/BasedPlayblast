@@ -39,13 +39,10 @@ The addon will automatically check for updates when Blender starts. You can also
 3. In the addon preferences, click "Check Now" to check for updates
 4. If an update is available, click "Install Update" to download and install it
 
-## What's new in v0.2.0
+## What's new in v0.2.1
 
 - No more hanging on playblast
-- New progress bar
-- 3D viewports now update during playblast and can be interacted with
-- Added proper metadata support with custom notes
-- Overall more stable and reliable
+- Updater in addon preferences
 
 ## Planned features:
 
