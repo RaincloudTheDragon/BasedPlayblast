@@ -2,7 +2,7 @@ bl_info = {
     "name": "BasedPlayblast",
     "author": "RaincloudTheDragon",
     "version": (0, 2, 1),
-    "blender": (4, 4, 0),
+    "blender": (4, 4, 1),
     "location": "Properties > Output > BasedPlayblast",
     "description": "Easily create playblasts from Blender",
     "warning": "",
@@ -429,6 +429,7 @@ class BPL_OT_create_playblast(Operator):
                 if (current_frame == self._frame_start and self._last_reported_frame >= self._frame_end) or os.path.exists(full_path):
                     # If we've seen the last frame or the file exists, consider it done
                     print(f"Detected playblast completion - Output file exists: {os.path.exists(full_path)}")
+                    
                     self._phase = 'COMPLETE'
                     props.render_progress = 100.0
                     props.status_message = "Finalizing output..."
@@ -438,8 +439,11 @@ class BPL_OT_create_playblast(Operator):
                         if area.type == 'PROPERTIES':
                             area.tag_redraw()
                 
-                # Also check direct frame count for completion (traditional method)
-                elif current_frame >= self._frame_end:
+                # Also check direct frame count for completion (look for final frame minus one)
+                elif current_frame >= (self._frame_end - 1):
+                    # Force frame to end+1 to ensure render completion is detected
+                    context.scene.frame_set(self._frame_end)
+                    
                     self._phase = 'COMPLETE'
                     props.render_progress = 100.0
                     props.status_message = "Finalizing output..."
@@ -635,8 +639,8 @@ class BPL_OT_create_playblast(Operator):
         except Exception as e:
             self.report({'ERROR'}, f"Error creating playblast: {str(e)}")
             self.cleanup(context)
-            return {'CANCELLED'}
-    
+            return {'CANCELLED'}        
+
     def finish(self, context):
         scene = context.scene
         props = scene.basedplayblast
@@ -657,8 +661,8 @@ class BPL_OT_create_playblast(Operator):
                 else:
                     subprocess.call(('xdg-open', latest_file))
             except Exception as e:
-                self.report({'ERROR'}, f"Failed to open playblast: {str(e)}")
-        
+                self.report({'ERROR'}, f"Failed to open playblast: {str(e)}")    
+
         self.cleanup(context)
     
     def cleanup(self, context):

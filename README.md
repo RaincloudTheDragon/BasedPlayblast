@@ -4,7 +4,7 @@ A simple "fork" of [this plugin](https://blenderartists.org/t/free-playblast-add
 
 BasedPlayblast lets you quickly create playblasts from Blender without the headache of reconfiguring your render settings or using render presets. It's perfect for previewing animations, showing WIPs to clients, or just checking how your stuff looks in motion. It's like rendering your viewport. Actually, that's exactly what it is...
 
-## Officially supports Blender 4.4.0, but probably still compatible with 4.3.2 or other previous versions.
+## Officially supports Blender 4.4.1, but probably still compatible with 4.3 or other previous versions.
 
 ## Features
 
