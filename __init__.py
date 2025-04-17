@@ -1,7 +1,7 @@
 bl_info = {
     "name": "BasedPlayblast",
     "author": "RaincloudTheDragon",
-    "version": (0, 2, 1),
+    "version": (0, 2, 2),
     "blender": (4, 4, 1),
     "location": "Properties > Output > BasedPlayblast",
     "description": "Easily create playblasts from Blender",
@@ -482,6 +482,14 @@ class BPL_OT_create_playblast(Operator):
         self._frame_end = scene.frame_end if props.use_scene_frame_range else props.end_frame
         self._current_frame = scene.frame_current
         
+        # Temporarily override Blender's frame range if using manual range
+        original_frame_start = scene.frame_start
+        original_frame_end = scene.frame_end
+        if not props.use_scene_frame_range:
+            scene.frame_start = props.start_frame
+            scene.frame_end = props.end_frame
+            print(f"Using manual frame range: {props.start_frame} - {props.end_frame}")
+        
         # Store original settings
         self._original_settings = {
             'filepath': scene.render.filepath,
@@ -492,6 +500,8 @@ class BPL_OT_create_playblast(Operator):
             'use_overwrite': scene.render.use_overwrite,
             'use_placeholder': scene.render.use_placeholder,
             'camera': scene.camera,
+            'frame_start': original_frame_start,  # Store original frame start
+            'frame_end': original_frame_end,      # Store original frame end
             'image_settings': {
                 'file_format': scene.render.image_settings.file_format,
                 'color_mode': scene.render.image_settings.color_mode
@@ -705,6 +715,10 @@ class BPL_OT_create_playblast(Operator):
             scene.render.image_settings.file_format = self._original_settings['image_settings']['file_format']
             scene.render.image_settings.color_mode = self._original_settings['image_settings']['color_mode']
             context.preferences.view.render_display_type = self._original_settings['display_mode']
+            
+            # Restore frame range to original values
+            scene.frame_start = self._original_settings['frame_start']
+            scene.frame_end = self._original_settings['frame_end']
             
             # Restore metadata settings
             scene.render.use_stamp = self._original_settings['use_stamp']
