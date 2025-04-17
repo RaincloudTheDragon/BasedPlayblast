@@ -39,10 +39,11 @@ The addon will automatically check for updates when Blender starts. You can also
 3. In the addon preferences, click "Check Now" to check for updates
 4. If an update is available, click "Install Update" to download and install it
 
-## What's new in v0.2.1
+## What's new in v0.2.2
 
 - No more hanging on playblast
 - Updater in addon preferences
+- Fixed manual scene range bug
 
 ## Planned features:
 
