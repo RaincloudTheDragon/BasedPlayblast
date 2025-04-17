@@ -1,7 +1,7 @@
 bl_info = {
     "name": "BasedPlayblast",
     "author": "RaincloudTheDragon",
-    "version": (0, 2, 0),
+    "version": (0, 2, 1),
     "blender": (4, 4, 0),
     "location": "Properties > Output > BasedPlayblast",
     "description": "Easily create playblasts from Blender",
@@ -17,8 +17,11 @@ import sys
 import tempfile
 import glob  # Add missing import
 from bpy.props import (StringProperty, BoolProperty, IntProperty, EnumProperty, PointerProperty, FloatProperty) # type: ignore
-from bpy.types import (Panel, Operator, PropertyGroup) # type: ignore
+from bpy.types import (Panel, Operator, PropertyGroup, AddonPreferences) # type: ignore
 import time
+
+# Import the updater module
+from . import updater
 
 # Pre-defined items lists for EnumProperties
 RESOLUTION_MODE_ITEMS = [
@@ -1006,6 +1009,112 @@ class BPL_PT_main_panel(Panel):
                 row.prop(props, "metadata_lens", toggle=True)
                 row.prop(props, "metadata_resolution", toggle=True)
 
+# Define the addon preferences class
+class BPL_AddonPreferences(AddonPreferences):
+    bl_idname = __name__
+    
+    # Updater preferences
+    auto_check_update: BoolProperty(  # type: ignore
+        name="Auto-check for Updates",
+        description="Automatically check for updates when Blender starts",
+        default=True
+    )
+    
+    update_check_interval: IntProperty(  # type: ignore
+        name="Update check interval (hours)",
+        description="How often to check for updates (in hours)",
+        default=24,
+        min=1,
+        max=168  # 1 week max
+    )
+    
+    def draw(self, context):
+        layout = self.layout
+        
+        box = layout.box()
+        col = box.column()
+        
+        row = col.row()
+        row.scale_y = 1.2
+        row.prop(self, "auto_check_update")
+        
+        row = col.row()
+        row.prop(self, "update_check_interval")
+        
+        # Show current version
+        box = layout.box()
+        col = box.column()
+        row = col.row()
+        row.label(text=f"Current Version: {updater.get_current_version()}")  # type: ignore
+        
+        if updater.UpdaterState.checking_for_updates:
+            row = col.row()
+            row.label(text="Checking for updates...", icon='SORTTIME')
+        elif updater.UpdaterState.error_message:
+            row = col.row()
+            row.label(text=f"Error: {updater.UpdaterState.error_message}", icon='ERROR')  # type: ignore
+        elif updater.UpdaterState.update_available:
+            row = col.row()
+            row.label(text=f"Update available: {updater.UpdaterState.update_version}", icon='PACKAGE')  # type: ignore
+            
+            row = col.row()
+            row.scale_y = 1.2
+            op = row.operator("bpl.install_update", text="Install Update", icon='IMPORT')
+        else:
+            row = col.row()
+            if updater.UpdaterState.last_check_time > 0:
+                from datetime import datetime
+                check_time = datetime.fromtimestamp(updater.UpdaterState.last_check_time).strftime('%Y-%m-%d %H:%M')  # type: ignore
+                row.label(text=f"Addon is up to date (last checked: {check_time})", icon='CHECKMARK')  # type: ignore
+            else:
+                row.label(text="Click to check for updates", icon='URL')
+        
+        row = col.row()
+        row.operator("bpl.check_for_updates", text="Check Now", icon='FILE_REFRESH')
+
+# Operation to check for updates
+class BPL_OT_check_for_updates(Operator):
+    bl_idname = "bpl.check_for_updates"
+    bl_label = "Check for Updates"
+    bl_description = "Check if a new version is available"
+    bl_options = {'REGISTER', 'INTERNAL'}
+    
+    def execute(self, context):
+        # Set the global update interval from the preferences
+        prefs = context.preferences.addons[__name__].preferences
+        updater.UPDATE_CHECK_INTERVAL = prefs.update_check_interval * 3600  # Convert to seconds
+        
+        # Force a check for updates (not async so we can show results immediately)
+        success = updater.check_for_updates(async_check=False)
+        
+        if success:
+            if updater.UpdaterState.update_available:
+                self.report({'INFO'}, f"Update available: {updater.UpdaterState.update_version}")  # type: ignore
+            else:
+                self.report({'INFO'}, "Addon is up to date")
+        else:
+            self.report({'ERROR'}, f"Error checking for updates: {updater.UpdaterState.error_message}")  # type: ignore
+        
+        return {'FINISHED'}
+
+# Operation to install updates
+class BPL_OT_install_update(Operator):
+    bl_idname = "bpl.install_update"
+    bl_label = "Install Update"
+    bl_description = "Download and install the latest version"
+    bl_options = {'REGISTER', 'INTERNAL'}
+    
+    def execute(self, context):
+        self.report({'INFO'}, "Downloading and installing update...")
+        success = updater.download_and_install_update()
+        
+        if success:
+            self.report({'INFO'}, f"Successfully updated to version {updater.UpdaterState.update_version}")  # type: ignore
+            return {'FINISHED'}
+        else:
+            self.report({'ERROR'}, f"Error installing update: {updater.UpdaterState.error_message}")  # type: ignore
+            return {'CANCELLED'}
+
 # Registration
 classes = (
     BPLProperties,
@@ -1015,6 +1124,9 @@ classes = (
     BPL_OT_sync_output_path,
     BPL_OT_sync_file_name,
     BPL_PT_main_panel,
+    BPL_AddonPreferences,
+    BPL_OT_check_for_updates,
+    BPL_OT_install_update,
 )
 
 def register():

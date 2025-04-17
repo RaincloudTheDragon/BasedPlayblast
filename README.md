@@ -14,6 +14,7 @@ BasedPlayblast lets you quickly create playblasts from Blender without the heada
 - Metadata options for including frame numbers, camera info, and custom notes
 - Auto-plays your video (externally) when it's done
 - Saves your playblast settings between sessions
+- Automatic update checking and one-click updates from GitHub releases
 
 ## How to install
 
@@ -28,6 +29,15 @@ BasedPlayblast lets you quickly create playblasts from Blender without the heada
 3. Hit that big "Create Playblast" button
 4. Watch as your animation renders with a progress bar that actually works!
 5. The video will auto-play when it's done
+
+### Updating the addon
+
+The addon will automatically check for updates when Blender starts. You can also:
+
+1. Go to Edit > Preferences > Add-ons
+2. Find BasedPlayblast in the list
+3. In the addon preferences, click "Check Now" to check for updates
+4. If an update is available, click "Install Update" to download and install it
 
 ## What's new in v0.2.0
 
