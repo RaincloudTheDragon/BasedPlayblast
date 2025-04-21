@@ -1,8 +1,8 @@
 bl_info = {
     "name": "BasedPlayblast",
     "author": "RaincloudTheDragon",
-    "version": (0, 2, 3),
-    "blender": (4, 4, 1),
+    "version": (0, 2, 4),
+    "blender": (4, 3, 0),
     "location": "Properties > Output > BasedPlayblast",
     "description": "Easily create playblasts from Blender",
     "warning": "",
