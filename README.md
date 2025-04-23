@@ -41,12 +41,12 @@ The addon will automatically check for updates when Blender starts. You can also
 
 ## What's new in v0.2.3
 
-- No more hanging on playblast
 - Updater in addon preferences
 - Fixed manual scene range bug
 
 ## Planned features:
 
 - Configurable settings so defaults can be set by end user (default prefix, etc)
+- sequencer audio/video strips support
 
 ## Feel free to report bugs
