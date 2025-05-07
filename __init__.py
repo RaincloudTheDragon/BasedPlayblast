@@ -21,7 +21,7 @@ from bpy.types import (Panel, Operator, PropertyGroup, AddonPreferences) # type:
 import time
 
 # Import the updater module
-from . import updater
+from . import addon_updater_ops
 
 # Pre-defined items lists for EnumProperties
 RESOLUTION_MODE_ITEMS = [
@@ -1173,6 +1173,9 @@ class BPL_PT_main_panel(Panel):
     bl_order = 1  # This positions it right after the main Output panel (which has bl_order=0)
     
     def draw(self, context):
+        # Check for addon updates
+        addon_updater_ops.check_for_update_background()
+        
         layout = self.layout
         scene = context.scene
         props = scene.basedplayblast
@@ -1182,6 +1185,9 @@ class BPL_PT_main_panel(Panel):
         row.scale_y = 1.5
         row.operator("bpl.create_playblast", text="PLAYBLAST", icon='RENDER_ANIMATION')
         row.operator("bpl.view_playblast", text="VIEW", icon='PLAY')
+        
+        # Show update notice if available
+        addon_updater_ops.update_notice_box_ui(self, context)
         
         # Show progress if rendering
         if props.is_rendering:
@@ -1323,108 +1329,41 @@ class BPL_AddonPreferences(AddonPreferences):
         default=True
     )
     
-    update_check_interval: IntProperty(  # type: ignore
-        name="Update check interval (hours)",
-        description="How often to check for updates (in hours)",
-        default=24,
-        min=1,
-        max=168  # 1 week max
+    updater_interval_months: IntProperty(  # type: ignore
+        name='Months',
+        description="Number of months between checking for updates",
+        default=0,
+        min=0
+    )
+    
+    updater_interval_days: IntProperty(  # type: ignore
+        name='Days',
+        description="Number of days between checking for updates",
+        default=7,
+        min=0,
+    )
+    
+    updater_interval_hours: IntProperty(  # type: ignore
+        name='Hours',
+        description="Number of hours between checking for updates",
+        default=0,
+        min=0,
+        max=23
+    )
+    
+    updater_interval_minutes: IntProperty(  # type: ignore
+        name='Minutes',
+        description="Number of minutes between checking for updates",
+        default=0,
+        min=0,
+        max=59
     )
     
     def draw(self, context):
         layout = self.layout
         
-        box = layout.box()
-        col = box.column()
-        
-        row = col.row()
-        row.scale_y = 1.2
-        row.prop(self, "auto_check_update")
-        
-        row = col.row()
-        row.prop(self, "update_check_interval")
-        
-        # Show current version
-        box = layout.box()
-        col = box.column()
-        row = col.row()
-        row.label(text=f"Current Version: {updater.get_current_version()}")  # type: ignore
-        
-        if updater.UpdaterState.checking_for_updates:
-            row = col.row()
-            row.label(text="Checking for updates...", icon='SORTTIME')
-        elif updater.UpdaterState.error_message:
-            row = col.row()
-            row.label(text=f"Error: {updater.UpdaterState.error_message}", icon='ERROR')  # type: ignore
-        elif updater.UpdaterState.update_available:
-            row = col.row()
-            row.label(text=f"Update available: {updater.UpdaterState.update_version}", icon='PACKAGE')  # type: ignore
-            
-            row = col.row()
-            row.scale_y = 1.2
-            op = row.operator("bpl.install_update", text="Install Update", icon='IMPORT')
-        else:
-            row = col.row()
-            if updater.UpdaterState.last_check_time > 0:
-                from datetime import datetime
-                check_time = datetime.fromtimestamp(updater.UpdaterState.last_check_time).strftime('%Y-%m-%d %H:%M')  # type: ignore
-                row.label(text=f"Addon is up to date (last checked: {check_time})", icon='CHECKMARK')  # type: ignore
-            else:
-                row.label(text="Click to check for updates", icon='URL')
-        
-        row = col.row()
-        row.operator("bpl.check_for_updates", text="Check Now", icon='FILE_REFRESH')
-
-# Operation to check for updates
-class BPL_OT_check_for_updates(Operator):
-    bl_idname = "bpl.check_for_updates"
-    bl_label = "Check for Updates"
-    bl_description = "Check if a new version is available"
-    bl_options = {'REGISTER', 'INTERNAL'}
-    
-    def execute(self, context):
-        # Set the global update interval from the preferences
-        prefs = context.preferences.addons[__name__].preferences
-        updater.UPDATE_CHECK_INTERVAL = prefs.update_check_interval * 3600  # Convert to seconds
-        
-        # Force a check for updates (not async so we can show results immediately)
-        success = updater.check_for_updates(async_check=False)
-        
-        if success:
-            if updater.UpdaterState.update_available:
-                self.report({'INFO'}, f"Update available: {updater.UpdaterState.update_version}")  # type: ignore
-            else:
-                self.report({'INFO'}, "Addon is up to date")
-        else:
-            self.report({'ERROR'}, f"Error checking for updates: {updater.UpdaterState.error_message}")  # type: ignore
-        
-        return {'FINISHED'}
-
-# Operation to install updates
-class BPL_OT_install_update(Operator):
-    bl_idname = "bpl.install_update"
-    bl_label = "Install Update"
-    bl_description = "Download and install the latest version"
-    bl_options = {'REGISTER', 'INTERNAL'}
-    
-    def execute(self, context):
-        self.report({'INFO'}, "Downloading and installing update...")
-        success = updater.download_and_install_update()
-        
-        if success:
-            self.report({'INFO'}, f"Successfully updated to version {updater.UpdaterState.update_version}. For best results, please restart Blender.")  # type: ignore
-            # Show a popup message recommending restart
-            def draw_restart_message(self, context):
-                layout = self.layout
-                layout.label(text=f"BasedPlayblast updated to version {updater.UpdaterState.update_version}")  # type: ignore
-                layout.label(text="While the addon has been reloaded, for best results")
-                layout.label(text="please save your work and restart Blender.")
-                
-            bpy.context.window_manager.popup_menu(draw_restart_message, title="Update Complete", icon='INFO')
-            return {'FINISHED'}
-        else:
-            self.report({'ERROR'}, f"Error installing update: {updater.UpdaterState.error_message}")  # type: ignore
-            return {'CANCELLED'}
+        # Updater settings
+        addon_updater_ops.update_settings_ui(self, context)
 
 # Registration
 classes = (
@@ -1438,8 +1377,6 @@ classes = (
     BPL_OT_restore_original_settings,
     BPL_PT_main_panel,
     BPL_AddonPreferences,
-    BPL_OT_check_for_updates,
-    BPL_OT_install_update,
 )
 
 def register():
@@ -1472,6 +1409,9 @@ def register():
         name="Show Metadata Settings",
         default=False
     )
+    
+    # Register addon updater code
+    addon_updater_ops.register(bl_info)
 
 def unregister():
     # Unregister properties for collapsible sections
@@ -1485,6 +1425,9 @@ def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     del bpy.types.Scene.basedplayblast
+    
+    # Unregister addon updater
+    addon_updater_ops.unregister()
 
 if __name__ == "__main__":
     register()

@@ -19,7 +19,8 @@ jobs:
       - name: Get Version
         id: get_version
         run: |
-          VERSION=$(python -c "import json; v=json.load(open('bl_info.json'))['version']; print(f'{v[0]}.{v[1]}.{v[2]}')")
+          # Extract version directly from __init__.py
+          VERSION=$(python -c "import re; version_match = re.search(r'\"version\": \((\d+), (\d+), (\d+)\)', open('__init__.py').read()); print(f'{version_match.group(1)}.{version_match.group(2)}.{version_match.group(3)}') if version_match else '0.0.0'")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "zip_name=BasedPlayblast.v$VERSION.zip" >> $GITHUB_OUTPUT
       
@@ -27,9 +28,26 @@ jobs:
         run: |
           # Create a temporary directory structure
           mkdir -p addon_files/BasedPlayblast
+          
           # Copy only the required files into the addon directory
-          cp __init__.py bl_info.json README.md requirements.txt addon_files/BasedPlayblast/
-          cp -r updater addon_files/BasedPlayblast/
+          cp __init__.py README.md addon_files/BasedPlayblast/
+          # Copy the updater files
+          cp addon_updater.py addon_updater_ops.py addon_files/BasedPlayblast/
+          
+          # Copy additional directories if they exist
+          if [ -d "updater" ]; then
+            cp -r updater addon_files/BasedPlayblast/
+          fi
+          
+          # Include other necessary files if they exist
+          if [ -f "requirements.txt" ]; then
+            cp requirements.txt addon_files/BasedPlayblast/
+          fi
+          
+          if [ -f "bl_info.json" ]; then
+            cp bl_info.json addon_files/BasedPlayblast/
+          fi
+          
           # Create the zip from the temporary directory
           cd addon_files
           zip -r "../${{ steps.get_version.outputs.zip_name }}" ./*
@@ -41,4 +59,5 @@ jobs:
         with:
           files: ${{ steps.get_version.outputs.zip_name }}
           tag_name: ${{ inputs.release_tag }}
+          generate_release_notes: true
           draft: true 
