@@ -16,7 +16,7 @@ const JOB_TYPE = {
           visible: "submission" },
 
         // playblast_output_root + add_path_components determine the value of playblast_output_path.
-        { key: "playblast_output_root", type: "string", subtype: "dir_path", required: true, visible: "submission",
+        { key: "playblast_output_root", type: "string", subtype: "dir_path", required: true, default: "//", visible: "submission",
           description: "Base directory of where playblast output is stored. Will have some job-specific parts appended to it"},
         { key: "add_path_components", type: "int32", required: true, default: 0, propargs: {min: 0, max: 32}, visible: "submission",
           description: "Number of path components of the current blend file to use in the playblast output path"},
@@ -27,11 +27,6 @@ const JOB_TYPE = {
         // Playblast specific settings
         { key: "resolution_percentage", type: "int32", default: 100, propargs: {min: 1, max: 100}, visible: "submission",
           description: "Percentage of the render resolution to use for playblast"},
-        { key: "use_viewport_settings", type: "bool", default: true, visible: "submission",
-          description: "Use current viewport display settings for playblast"},
-        { key: "display_mode", type: "string", required: true, default: "SOLID", visible: "submission",
-          description: "Viewport display mode (WIREFRAME, SOLID, MATERIAL, RENDERED)",
-          choices: ["WIREFRAME", "SOLID", "MATERIAL", "RENDERED"] },
 
         // Automatically evaluated settings:
         { key: "blendfile", type: "string", required: true, description: "Path of the Blend file to playblast", visible: "web" },
@@ -64,19 +59,32 @@ function compileJob(job) {
     // actually-used playblast output:
     settings.playblast_output_path = playblastOutput;
 
+    // Get the blast base directory (without jobname subfolder)
+    const baseDir = path.dirname(path.dirname(playblastOutput));
     const playblastDir = path.dirname(playblastOutput);
+    
     const playblastTasks = authorPlayblastTasks(settings, playblastDir, playblastOutput);
-    const videoTask = authorCreateVideoTask(settings, playblastDir);
-
+    const tasks = authorCreateVideoTask(settings, playblastDir, baseDir);
+    
+    // Add all playblast tasks
     for (const pt of playblastTasks) {
         job.addTask(pt);
     }
-    if (videoTask) {
-        // If there is a video task, all other tasks have to be done first.
+    
+    // Add video task and make it dependent on playblast tasks
+    if (tasks && tasks.length > 0) {
+        const videoTask = tasks[0];
+        // Video task depends on all playblast tasks
         for (const pt of playblastTasks) {
             videoTask.addDependency(pt);
         }
         job.addTask(videoTask);
+        
+        // If there's a cleanup task, add it too
+        if (tasks.length > 1) {
+            const cleanupTask = tasks[1];
+            job.addTask(cleanupTask);
+        }
     }
 }
 
@@ -108,7 +116,9 @@ function authorPlayblastTasks(settings, playblastDir, playblastOutput) {
 
     for (let chunk of chunks) {
         const task = author.Task(`playblast-${chunk}`, "blender");
-        const command = author.Command("blender-render", {
+        
+        // Use standard rendering with the blend file's existing settings
+        const renderCommand = author.Command("blender-render", {
             exe: "{blender}",
             exeArgs: "{blenderArgs}",
             argsBefore: [],
@@ -117,66 +127,22 @@ function authorPlayblastTasks(settings, playblastDir, playblastOutput) {
                 "--python-expr", `
 import bpy
 
-# Set resolution percentage
-bpy.context.scene.render.resolution_percentage = ${settings.resolution_percentage}
-
-# Find a 3D view to use for playblast
-area = None
-for a in bpy.context.screen.areas:
-    if a.type == 'VIEW_3D':
-        area = a
-        break
-
-if area:
-    # Store original settings
-    space = area.spaces.active
-    original_shading = space.shading.type
-    original_overlays = space.overlay.show_overlays
-    
-    # Switch to desired display mode
-    space.shading.type = '${settings.display_mode}'
-    
-    # Disable overlays for cleaner output
-    space.overlay.show_overlays = False
-    
-    # Make sure we're in camera view
-    region_3d = None
-    for region in area.regions:
-        if region.type == 'WINDOW':
-            region_3d = space.region_3d
-            break
-    
-    if region_3d:
-        # Switch to camera view if needed
-        original_perspective = region_3d.view_perspective
-        region_3d.view_perspective = 'CAMERA'
-
-# Now perform the OpenGL render (playblast)
-bpy.ops.render.opengl(animation=True, 
-                     render_keyed_only=False, 
-                     sequencer=False, 
-                     write_still=True, 
-                     view_context=${settings.use_viewport_settings})
-
-# Restore original settings if we found and modified a 3D view
-if area:
-    space.shading.type = original_shading
-    space.overlay.show_overlays = original_overlays
-    if region_3d and 'original_perspective' in locals():
-        region_3d.view_perspective = original_perspective
+# Use standard render for animation with existing blend file settings
+bpy.ops.render.render(animation=True)
 `,
                 "--render-output", path.join(playblastDir, path.basename(playblastOutput)),
                 "--render-format", settings.format,
-                "--render-frame", chunk.replaceAll("-", ".."), // Convert to Blender frame range notation.
+                "--render-frame", chunk.replaceAll("-", "..")
             ])
         });
-        task.addCommand(command);
+        
+        task.addCommand(renderCommand);
         playblastTasks.push(task);
     }
     return playblastTasks;
 }
 
-function authorCreateVideoTask(settings, playblastDir) {
+function authorCreateVideoTask(settings, playblastDir, baseDir) {
     if (!settings.fps) {
         print("Not authoring video task, no FPS known:", settings);
         return;
@@ -191,14 +157,19 @@ function authorCreateVideoTask(settings, playblastDir) {
         frames = `${firstFrame}-${lastFrame}`;
     }
 
-    const stem = path.stem(settings.blendfile).replace('.flamenco', '');
-    const outfile = path.join(playblastDir, `${stem}-blast-${frames}.mp4`);
+    const jobname = path.stem(path.basename(playblastDir));
+    // Create video output path directly in the blast folder with the naming convention blast_[jobname]_[frames].mp4
+    const outfile = path.join(baseDir, `blast_${jobname}_${frames}.mp4`);
+    const inputGlob = path.join(playblastDir, `*${settings.image_file_extension}`);
 
-    const task = author.Task('playblast-video', 'ffmpeg');
-    const command = author.Command("frames-to-video", {
+    // Create the ffmpeg task
+    const videoTask = author.Task('playblast-video', 'ffmpeg');
+    
+    // Command to create the video from frames
+    const ffmpegCommand = author.Command("frames-to-video", {
         exe: "ffmpeg",
         fps: settings.fps,
-        inputGlob: path.join(playblastDir, `*${settings.image_file_extension}`),
+        inputGlob: inputGlob,
         outputFile: outfile,
         args: [
             '-c:v',
@@ -220,8 +191,76 @@ function authorCreateVideoTask(settings, playblastDir) {
             '-y', // Be sure to always pass either "-n" or "-y".
         ],
     });
-    task.addCommand(command);
+    
+    videoTask.addCommand(ffmpegCommand);
+    
+    // Create a separate Blender task for cleanup
+    const cleanupTask = author.Task('playblast-cleanup', 'blender');
+    
+    // Command to delete the frame images and job folder after video creation using Blender Python
+    const cleanupCommand = author.Command("blender-render", {
+        exe: "{blender}",
+        exeArgs: "{blenderArgs}",
+        blendfile: "",  // Empty to avoid loading a blend file
+        argsBefore: ["-b", "--python-expr"],
+        args: [`
+import os
+import glob
+import sys
+import shutil
+import time
 
-    print(`Creating output video for playblast`);
-    return task;
+# Get the path to clean up
+cleanup_pattern = "${inputGlob.replace(/\\/g, '\\\\')}"
+job_folder = "${playblastDir.replace(/\\/g, '\\\\')}"
+print(f"Cleaning up temporary frames: {cleanup_pattern}")
+
+# Find all matching files
+files = glob.glob(cleanup_pattern)
+print(f"Found {len(files)} files to delete")
+
+# Delete each file
+deleted_count = 0
+for file in files:
+    try:
+        os.remove(file)
+        deleted_count += 1
+    except Exception as e:
+        print(f"Error deleting {file}: {e}")
+
+print(f"Cleanup completed: {deleted_count} files deleted")
+
+# Small delay to ensure file operations are complete
+time.sleep(0.5)
+
+# Now forcibly delete the job folder since we know we've removed all important files
+try:
+    if os.path.exists(job_folder):
+        # List contents for debugging
+        remaining_files = os.listdir(job_folder)
+        if remaining_files:
+            print(f"Detected remaining files in job folder: {remaining_files}")
+            print("These are likely system files or metadata which can be safely removed")
+        
+        # Force deletion regardless of content
+        shutil.rmtree(job_folder)
+        print(f"Deleted job folder: {job_folder}")
+    else:
+        print(f"Job folder does not exist: {job_folder}")
+except Exception as e:
+    print(f"Error deleting job folder: {e}")
+
+sys.exit(0)  # Exit with success code regardless of folder deletion
+`]
+    });
+    
+    cleanupTask.addCommand(cleanupCommand);
+    
+    // Make the cleanup task dependent on the video task
+    cleanupTask.addDependency(videoTask);
+    
+    print(`Creating output video for playblast and separate cleanup task for temporary frames`);
+    
+    // Return an array of tasks instead of just one
+    return [videoTask, cleanupTask];
 }

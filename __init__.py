@@ -1,7 +1,7 @@
 bl_info = {
     "name": "BasedPlayblast",
     "author": "RaincloudTheDragon",
-    "version": (0, 2, 4),
+    "version": (0, 3, 0),
     "blender": (4, 3, 0),
     "location": "Properties > Output > BasedPlayblast",
     "description": "Easily create playblasts from Blender",
@@ -335,6 +335,13 @@ class BPLProperties(PropertyGroup):
     
     status_message: StringProperty(  # type: ignore
         name="Status Message",
+        default=""
+    )
+    
+    # Add the property to store original settings at scene level
+    original_settings: StringProperty(  # type: ignore
+        name="Original Settings",
+        description="JSON string holding original render settings",
         default=""
     )
 
@@ -886,6 +893,275 @@ class BPL_OT_sync_file_name(Operator):
         self.report({'INFO'}, f"File name synced with Blender's output file name")
         return {'FINISHED'}
 
+# New operator to apply blast render settings
+class BPL_OT_apply_blast_settings(Operator):
+    bl_idname = "bpl.apply_blast_settings"
+    bl_label = "Apply Blast Render Settings"
+    bl_description = "Apply Playblast render settings to the scene without rendering"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    def execute(self, context):
+        scene = context.scene
+        props = scene.basedplayblast
+        
+        # First, save the original settings if not already saved
+        if not props.original_settings:
+            import json
+            original_settings = {
+                'filepath': scene.render.filepath,
+                'resolution_x': scene.render.resolution_x,
+                'resolution_y': scene.render.resolution_y,
+                'resolution_percentage': scene.render.resolution_percentage,
+                'use_file_extension': scene.render.use_file_extension,
+                'use_overwrite': scene.render.use_overwrite,
+                'use_placeholder': scene.render.use_placeholder,
+                'camera': scene.camera.name if scene.camera else "",
+                'frame_start': scene.frame_start,
+                'frame_end': scene.frame_end,
+                'image_settings': {
+                    'file_format': scene.render.image_settings.file_format,
+                    'color_mode': scene.render.image_settings.color_mode
+                },
+                'display_mode': context.preferences.view.render_display_type,
+                # Store render engine
+                'render_engine': scene.render.engine,
+                # Store metadata settings
+                'use_stamp': scene.render.use_stamp,
+                'use_stamp_date': scene.render.use_stamp_date,
+                'use_stamp_time': scene.render.use_stamp_time,
+                'use_stamp_frame': scene.render.use_stamp_frame,
+                'use_stamp_camera': scene.render.use_stamp_camera,
+                'use_stamp_lens': scene.render.use_stamp_lens,
+                'use_stamp_scene': scene.render.use_stamp_scene,
+                'use_stamp_note': scene.render.use_stamp_note,
+                'stamp_note_text': scene.render.stamp_note_text
+            }
+            props.original_settings = json.dumps(original_settings)
+        
+        # Find a 3D view to apply shading settings
+        found_3d_view = False
+        for a in context.screen.areas:
+            if a.type == 'VIEW_3D':
+                space = a.spaces.active
+                original_shading = space.shading.type
+                original_overlays = space.overlay.show_overlays
+                
+                # Set shading type according to display_mode
+                space.shading.type = props.display_mode
+                    
+                # Set overlay visibility
+                if props.auto_disable_overlays:
+                    space.overlay.show_overlays = False
+                
+                # For camera view, find the 3D region
+                for region in a.regions:
+                    if region.type == 'WINDOW':
+                        region_3d = space.region_3d
+                        if region_3d:
+                            # Store and set view
+                            original_view_perspective = region_3d.view_perspective
+                            original_use_local_camera = getattr(region_3d, 'use_local_camera', None)
+                            
+                            # Switch to camera view if needed
+                            region_3d.view_perspective = 'CAMERA'
+                            if hasattr(region_3d, 'use_local_camera'):
+                                region_3d.use_local_camera = False
+                        break
+                
+                found_3d_view = True
+                break
+        
+        if not found_3d_view:
+            self.report({'WARNING'}, "No 3D viewport found to apply display settings")
+        
+        try:
+            # Set render engine based on display mode - this is the critical addition!
+            if props.display_mode == 'RENDERED':
+                # Keep the existing render engine if user wants rendered view
+                pass
+            elif props.display_mode == 'MATERIAL':
+                # For material preview, use EEVEE 
+                scene.render.engine = 'BLENDER_EEVEE_NEXT'
+            else:
+                # For SOLID or WIREFRAME, use Workbench
+                scene.render.engine = 'BLENDER_WORKBENCH'
+                
+                # Configure workbench settings based on current viewport
+                if found_3d_view:
+                    scene.display.shading.light = space.shading.light
+                    scene.display.shading.color_type = space.shading.color_type
+                    scene.display.shading.show_object_outline = space.shading.show_object_outline
+                    if props.display_mode == 'WIREFRAME':
+                        scene.display.shading.type = 'WIREFRAME'
+                    else:
+                        scene.display.shading.type = 'SOLID'
+            
+            # Set resolution based on mode
+            if props.resolution_mode == 'PRESET':
+                preset = props.resolution_preset
+                x_str = preset.split('y')[0].replace('x', '')
+                y_str = preset.split('y')[1]
+                scene.render.resolution_x = int(x_str)
+                scene.render.resolution_y = int(y_str)
+            elif props.resolution_mode == 'CUSTOM':
+                scene.render.resolution_x = props.resolution_x
+                scene.render.resolution_y = props.resolution_y
+            
+            scene.render.resolution_percentage = props.resolution_percentage
+            
+            # Create output directory
+            output_dir = bpy.path.abspath(props.output_path)
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Set output path
+            file_name = props.file_name
+            if '.' in file_name:
+                file_name = os.path.splitext(file_name)[0]
+            scene.render.filepath = os.path.join(output_dir, file_name)
+            
+            # Set file format
+            scene.render.image_settings.file_format = 'FFMPEG'
+            scene.render.ffmpeg.format = props.video_format
+            scene.render.ffmpeg.codec = props.video_codec
+            scene.render.ffmpeg.constant_rate_factor = props.video_quality
+            
+            # Audio settings
+            if props.include_audio:
+                scene.render.ffmpeg.audio_codec = props.audio_codec
+                scene.render.ffmpeg.audio_bitrate = props.audio_bitrate
+            else:
+                scene.render.ffmpeg.audio_codec = 'NONE'
+            
+            # Set camera if specified
+            if not props.use_active_camera and props.camera_object != "NONE":
+                camera_obj = context.scene.objects.get(props.camera_object)
+                if camera_obj and camera_obj.type == 'CAMERA':
+                    scene.camera = camera_obj
+            
+            # Set frame range if using manual range
+            if not props.use_scene_frame_range:
+                scene.frame_start = props.start_frame
+                scene.frame_end = props.end_frame
+            
+            # Setup metadata
+            if props.show_metadata:
+                scene.render.use_stamp = True
+                scene.render.use_stamp_date = props.metadata_date
+                scene.render.use_stamp_time = props.metadata_date  # Usually linked with date
+                scene.render.use_stamp_frame = props.metadata_frame
+                scene.render.use_stamp_camera = props.metadata_camera
+                scene.render.use_stamp_lens = props.metadata_lens
+                scene.render.use_stamp_scene = props.metadata_scene
+                
+                # Set note if provided
+                if props.metadata_note:
+                    scene.render.use_stamp_note = True
+                    
+                    # Build the note text
+                    note = props.metadata_note
+                    
+                    # Add resolution info if enabled
+                    if props.metadata_resolution:
+                        res_x = scene.render.resolution_x * (scene.render.resolution_percentage / 100.0)
+                        res_y = scene.render.resolution_y * (scene.render.resolution_percentage / 100.0)
+                        note += f"\nResolution: {int(res_x)} x {int(res_y)}"
+                    
+                    scene.render.stamp_note_text = note
+            else:
+                scene.render.use_stamp = False
+            
+            self.report({'INFO'}, f"Blast settings applied, render engine set to {scene.render.engine}")
+            return {'FINISHED'}
+            
+        except Exception as e:
+            self.report({'ERROR'}, f"Error applying settings: {str(e)}")
+            return {'CANCELLED'}
+
+# New operator to restore original render settings
+class BPL_OT_restore_original_settings(Operator):
+    bl_idname = "bpl.restore_original_settings"
+    bl_label = "Restore Original Render Settings"
+    bl_description = "Restore the original render settings before the blast settings were applied"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    def execute(self, context):
+        scene = context.scene
+        props = scene.basedplayblast
+        
+        # Check if we have original settings saved
+        if not props.original_settings:
+            self.report({'ERROR'}, "No original settings saved to restore")
+            return {'CANCELLED'}
+        
+        try:
+            import json
+            original = json.loads(props.original_settings)
+            
+            # Restore render settings
+            scene.render.filepath = original['filepath']
+            scene.render.resolution_x = original['resolution_x']
+            scene.render.resolution_y = original['resolution_y']
+            scene.render.resolution_percentage = original['resolution_percentage']
+            scene.render.use_file_extension = original['use_file_extension']
+            scene.render.use_overwrite = original['use_overwrite']
+            scene.render.use_placeholder = original['use_placeholder']
+            scene.render.image_settings.file_format = original['image_settings']['file_format']
+            scene.render.image_settings.color_mode = original['image_settings']['color_mode']
+            context.preferences.view.render_display_type = original['display_mode']
+            
+            # Restore render engine
+            if 'render_engine' in original:
+                scene.render.engine = original['render_engine']
+            
+            # Restore camera if it exists
+            if original['camera'] and original['camera'] in scene.objects:
+                scene.camera = scene.objects[original['camera']]
+            
+            # Restore frame range
+            scene.frame_start = original['frame_start']
+            scene.frame_end = original['frame_end']
+            
+            # Restore metadata settings
+            scene.render.use_stamp = original['use_stamp']
+            scene.render.use_stamp_date = original['use_stamp_date']
+            scene.render.use_stamp_time = original['use_stamp_time']
+            scene.render.use_stamp_frame = original['use_stamp_frame']
+            scene.render.use_stamp_camera = original['use_stamp_camera']
+            scene.render.use_stamp_lens = original['use_stamp_lens']
+            scene.render.use_stamp_scene = original['use_stamp_scene']
+            scene.render.use_stamp_note = original['use_stamp_note']
+            scene.render.stamp_note_text = original['stamp_note_text']
+            
+            # Find 3D views and restore
+            for a in context.screen.areas:
+                if a.type == 'VIEW_3D':
+                    # We don't store these per 3D view in the JSON, so just do a general reset
+                    space = a.spaces.active
+                    # Reset to solid (common default)
+                    space.shading.type = 'SOLID'  
+                    # Enable overlays (common default)
+                    space.overlay.show_overlays = True
+                    
+                    # For any camera view, we'll reset
+                    for region in a.regions:
+                        if region.type == 'WINDOW':
+                            region_3d = space.region_3d
+                            if region_3d and region_3d.view_perspective == 'CAMERA':
+                                # User might want perspective or ortho, but this is safer than leaving camera
+                                region_3d.view_perspective = 'PERSP'  
+                                if hasattr(region_3d, 'use_local_camera'):
+                                    region_3d.use_local_camera = False
+            
+            # Clear the stored original settings
+            props.original_settings = ""
+            
+            self.report({'INFO'}, "Original settings restored")
+            return {'FINISHED'}
+            
+        except Exception as e:
+            self.report({'ERROR'}, f"Error restoring settings: {str(e)}")
+            return {'CANCELLED'}
+
 # UI Panel
 class BPL_PT_main_panel(Panel):
     bl_label = "BasedPlayblast"
@@ -926,6 +1202,15 @@ class BPL_PT_main_panel(Panel):
         row = box.row(align=True)
         row.prop(props, "file_name")
         row.operator("bpl.sync_file_name", text="", icon='FILE_REFRESH')
+        
+        # MOVED BUTTONS: Add the settings apply/restore buttons here, after output settings
+        layout.separator()
+        
+        # Settings apply/restore buttons
+        row = layout.row(align=True)
+        row.scale_y = 1.2
+        row.operator("bpl.apply_blast_settings", text="Apply Blast Render Settings", icon='GREASEPENCIL')
+        row.operator("bpl.restore_original_settings", text="Restore Original Settings", icon='LOOP_BACK')
         
         # Camera settings - collapsible
         cam_box = layout.box()
@@ -1149,6 +1434,8 @@ classes = (
     BPL_OT_view_latest_playblast,
     BPL_OT_sync_output_path,
     BPL_OT_sync_file_name,
+    BPL_OT_apply_blast_settings,
+    BPL_OT_restore_original_settings,
     BPL_PT_main_panel,
     BPL_AddonPreferences,
     BPL_OT_check_for_updates,
