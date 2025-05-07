@@ -35,7 +35,7 @@ You can now farm a blast! This requires both the plugin, and Flamenco to work to
 
 1. Place BasedPlayblast.js in /Flamenco/scripts - this script is just for outputting the blast, and is, thus, destructive. Do not use this for anything except playblasts.
 2. Set output settings within BasedPlayblast panel
-3. Click "Apply Blast Render Settings" - this takes the settings that the blaster normally handles locally, and puts it into the blendfile so it can be farmed.
+3. Click "Apply Blast Render Settings" - this takes the settings that the blaster normally handles locally, and puts it into the blendfile so it can be farmed. (Tip: you can set additional settings, such as workbench texture display, here.)
 4. Set flamenco settings (I recommend # of frames/# of workers)
 5. Click "Restore Original Render Settings" - you probably don't want to keep it on the blast settings permanently...
 
