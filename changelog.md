@@ -1,3 +1,6 @@
+v0.3.1
+    - fixed Flamenco integration for material/rendered preview blasts
+
 v0.3.0    
     - Added Flamenco integration
     - Integrated CGCookie/blender-addon-updater to replace mine
