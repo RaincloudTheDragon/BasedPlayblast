@@ -14,6 +14,7 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+basedplayblast_updater/
 
 # IDE specific files
 .vscode/

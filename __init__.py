@@ -1,7 +1,7 @@
 bl_info = {
     "name": "BasedPlayblast",
     "author": "RaincloudTheDragon",
-    "version": (0, 3, 0),
+    "version": (0, 3, 1),
     "blender": (4, 3, 0),
     "location": "Properties > Output > BasedPlayblast",
     "description": "Easily create playblasts from Blender",
@@ -342,6 +342,13 @@ class BPLProperties(PropertyGroup):
     original_settings: StringProperty(  # type: ignore
         name="Original Settings",
         description="JSON string holding original render settings",
+        default=""
+    )
+    
+    # Add property to store extended settings like light states
+    original_settings_extended: StringProperty(  # type: ignore
+        name="Extended Original Settings",
+        description="String holding additional original settings like light states",
         default=""
     )
 
@@ -901,6 +908,9 @@ class BPL_OT_apply_blast_settings(Operator):
     bl_options = {'REGISTER', 'UNDO'}
     
     def execute(self, context):
+        # We need os, sys and json in this scope where they're used
+        import os
+        
         scene = context.scene
         props = scene.basedplayblast
         
@@ -925,6 +935,8 @@ class BPL_OT_apply_blast_settings(Operator):
                 'display_mode': context.preferences.view.render_display_type,
                 # Store render engine
                 'render_engine': scene.render.engine,
+                # Store world
+                'world': scene.world.name if scene.world else "",
                 # Store metadata settings
                 'use_stamp': scene.render.use_stamp,
                 'use_stamp_date': scene.render.use_stamp_date,
@@ -977,11 +989,464 @@ class BPL_OT_apply_blast_settings(Operator):
         try:
             # Set render engine based on display mode - this is the critical addition!
             if props.display_mode == 'RENDERED':
-                # Keep the existing render engine if user wants rendered view
-                pass
+                # For rendered preview, we'll optimize the render settings 
+                # while keeping the scene's chosen render engine
+                try:
+                    # Store current render engine to report later
+                    current_engine = scene.render.engine
+                    print(f"Using existing render engine: {current_engine}")
+                    
+                    # Apply engine-specific optimizations
+                    if current_engine == 'BLENDER_EEVEE' or current_engine == 'BLENDER_EEVEE_NEXT':
+                        # Apply EEVEE-specific optimizations for faster rendering
+                        eevee_attr = 'eevee' if hasattr(scene, 'eevee') else 'eevee_next'
+                        eevee = getattr(scene, eevee_attr) if hasattr(scene, eevee_attr) else None
+                        
+                        if eevee:
+                            # Set minimal acceptable quality
+                            if hasattr(eevee, 'taa_render_samples'):
+                                eevee.taa_render_samples = 4  # Balance between quality and speed for final render
+                                print(f"Set render samples to 4 for RENDERED mode")
+                            
+                            # Minimal shadow settings - but keep shadows for realism
+                            if hasattr(eevee, 'shadow_cube_size'):
+                                eevee.shadow_cube_size = '512'  # Medium shadow resolution
+                            if hasattr(eevee, 'use_soft_shadows'):
+                                eevee.use_soft_shadows = True  # Keep soft shadows for realism
+                            
+                            # Disable expensive effects
+                            if hasattr(eevee, 'use_bloom'):
+                                eevee.use_bloom = False
+                            if hasattr(eevee, 'use_ssr'):
+                                eevee.use_ssr = False
+                            if hasattr(eevee, 'use_motion_blur'):
+                                eevee.use_motion_blur = False
+                            if hasattr(eevee, 'use_volumetric_lights'):
+                                eevee.use_volumetric_lights = False
+                            
+                            # Use moderate global illumination
+                            if hasattr(eevee, 'gi_diffuse_bounces'):
+                                eevee.gi_diffuse_bounces = 1  # Just one bounce for indirect lighting
+                                
+                            # Enable persistent data if available for faster animation rendering
+                            if hasattr(eevee, 'use_persistent_data'):
+                                eevee.use_persistent_data = True
+                                print(f"Enabled persistent data for faster EEVEE animation rendering")
+                                
+                            print(f"Applied optimized EEVEE settings for RENDERED mode")
+                            
+                    elif current_engine == 'CYCLES':
+                        # Apply Cycles-specific optimizations
+                        cycles = scene.cycles
+                        
+                        # Use extremely low samples for preview
+                        if hasattr(cycles, 'samples'):
+                            cycles.samples = 8  # Absolute minimum for playblast
+                            print(f"Set Cycles samples to 8 for maximum speed")
+                        
+                        # Disable denoising entirely for faster rendering
+                        if hasattr(cycles, 'use_denoising'):
+                            cycles.use_denoising = False
+                            print(f"Disabled Cycles denoising for maximum speed")
+                        
+                        # Use fastest render settings
+                        if hasattr(cycles, 'max_bounces'):
+                            cycles.max_bounces = 2  # Almost no light bounces
+                        if hasattr(cycles, 'diffuse_bounces'):
+                            cycles.diffuse_bounces = 1  # Minimal diffuse
+                        if hasattr(cycles, 'glossy_bounces'):
+                            cycles.glossy_bounces = 1  # Minimal reflections
+                        if hasattr(cycles, 'transmission_bounces'):
+                            cycles.transmission_bounces = 1  # Minimal glass/transparency
+                        if hasattr(cycles, 'volume_bounces'):
+                            cycles.volume_bounces = 0  # No volume scattering
+                        if hasattr(cycles, 'caustics_reflective'):
+                            cycles.caustics_reflective = False  # Disable reflective caustics
+                        if hasattr(cycles, 'caustics_refractive'):
+                            cycles.caustics_refractive = False  # Disable refractive caustics
+                        
+                        # Set pixel filter width to 0.01 for faster rendering
+                        if hasattr(cycles, 'pixel_filter_width'):
+                            cycles.pixel_filter_width = 0.01
+                            
+                        # Use lowest quality shadow and AO settings
+                        if hasattr(cycles, 'ao_bounces'):
+                            cycles.ao_bounces = 1
+                        if hasattr(cycles, 'ao_bounces_render'):
+                            cycles.ao_bounces_render = 1
+                            
+                        # Use adaptive sampling with very low thresholds
+                        if hasattr(cycles, 'use_adaptive_sampling'):
+                            cycles.use_adaptive_sampling = True
+                        if hasattr(cycles, 'adaptive_threshold'):
+                            cycles.adaptive_threshold = 0.5  # Very high threshold = faster convergence
+                        if hasattr(cycles, 'adaptive_min_samples'):
+                            cycles.adaptive_min_samples = 0  # Allow adaptive sampling to stop early
+                            
+                        # Use faster integrator settings
+                        if hasattr(cycles, 'light_sampling_threshold'):
+                            cycles.light_sampling_threshold = 0.5
+                            
+                        # CRITICAL: Enable persistent data for much faster animation rendering
+                        if hasattr(cycles, 'use_persistent_data'):
+                            cycles.use_persistent_data = True
+                            print(f"Enabled persistent data for faster animation rendering")
+                            
+                        # Use faster GPU rendering if available
+                        if hasattr(cycles, 'device'):
+                            # Try to use GPU if available
+                            try:
+                                cycles.device = 'GPU'
+                            except:
+                                # If setting GPU fails, stick with current device
+                                pass
+                                
+                        print(f"Applied optimized Cycles settings for RENDERED mode")
+                    
+                    # General optimizations regardless of render engine
+                    
+                    # Enable simplify settings for render
+                    if hasattr(scene.render, 'use_simplify'):
+                        scene.render.use_simplify = True
+                        
+                        # Set moderate simplification for final render
+                        if hasattr(scene.render, 'simplify_subdivision'):
+                            scene.render.simplify_subdivision = 1
+                        if hasattr(scene.render, 'simplify_child_particles'):
+                            scene.render.simplify_child_particles = 0.5
+                        if hasattr(scene.render, 'simplify_volumes'):
+                            scene.render.simplify_volumes = 0.5
+                            
+                    # Disable compositor for faster rendering
+                    scene.use_nodes = False
+                    
+                    # Reduce texture size limit for faster material evaluation
+                    if hasattr(scene.render, 'texture_limit'):
+                        scene.render.texture_limit = '2048'  # Reduced but still decent quality
+                    
+                    # Disable motion blur
+                    if hasattr(scene.render, 'use_motion_blur'):
+                        scene.render.use_motion_blur = False
+                        
+                    # Keep all lights and world settings for RENDERED mode
+                    # This is the key difference from MATERIAL mode - we want to use
+                    # the actual scene lighting and world settings
+                    
+                    print(f"RENDERED preview mode configured with optimized settings")
+                
+                except Exception as e:
+                    self.report({'WARNING'}, f"Note: Couldn't set all RENDERED mode settings: {str(e)}")
             elif props.display_mode == 'MATERIAL':
                 # For material preview, use EEVEE 
                 scene.render.engine = 'BLENDER_EEVEE_NEXT'
+                
+                # Material preview uses an HDRI environment for lighting
+                try:
+                    # Completely remove scene world - critical for studio lighting
+                    scene.world = None
+                    
+                    # CRITICAL FIX: Store and temporarily disable all scene lights
+                    original_light_states = {}
+                    for obj in scene.objects:
+                        if obj.type == 'LIGHT':
+                            # Store original visibility and hide status
+                            original_light_states[obj.name] = {
+                                'hide_viewport': obj.hide_viewport,
+                                'hide_render': obj.hide_render,
+                                'visible_camera': obj.visible_camera,
+                                'visible_diffuse': obj.visible_diffuse,
+                                'visible_glossy': obj.visible_glossy,
+                                'visible_transmission': obj.visible_transmission,
+                                'visible_volume_scatter': obj.visible_volume_scatter
+                            }
+                            
+                            # Disable the light completely for rendering
+                            obj.hide_render = True
+                            obj.hide_viewport = True
+                            obj.visible_camera = False
+                            obj.visible_diffuse = False
+                            obj.visible_glossy = False
+                            obj.visible_transmission = False
+                            obj.visible_volume_scatter = False
+                            
+                            print(f"Temporarily disabled light: {obj.name}")
+                    
+                    # Get path to Blender installation and construct studio lights path
+                    # Make sure modules are available for this section
+                    import os
+                    import sys
+                    
+                    # Get the Blender executable path
+                    blender_exe = bpy.app.binary_path
+                    blender_dir = os.path.dirname(blender_exe)
+                    
+                    # Construct path to studio lights directory
+                    # Note: This may vary based on Blender installation but should work for most setups
+                    studio_lights_dir = os.path.join(blender_dir, "datafiles", "studiolights", "world")
+                    
+                    # Additional paths for different Blender installations (specifically for Blender 4.4)
+                    possible_paths = [
+                        # Standard path
+                        studio_lights_dir,
+                        # Blender 4.4 specific path structure with extra version directory
+                        os.path.join(blender_dir, "4.4", "datafiles", "studiolights", "world"),
+                        # Other possible locations
+                        os.path.join(blender_dir, "..", "datafiles", "studiolights", "world"),
+                        os.path.join(blender_dir, "..", "..", "datafiles", "studiolights", "world"),
+                        os.path.join(blender_dir, "..", "4.4", "datafiles", "studiolights", "world"),
+                        os.path.join(os.path.dirname(os.path.dirname(blender_exe)), "4.4", "datafiles", "studiolights", "world"),
+                        # Version-specific paths for various Blender installations
+                        os.path.join(os.path.dirname(blender_dir), "4.4", "datafiles", "studiolights", "world")
+                    ]
+                    
+                    # Get Blender's version and construct a version-specific path
+                    blender_version = bpy.app.version
+                    version_str = f"{blender_version[0]}.{blender_version[1]}"
+                    possible_paths.append(os.path.join(blender_dir, version_str, "datafiles", "studiolights", "world"))
+                    possible_paths.append(os.path.join(os.path.dirname(blender_dir), version_str, "datafiles", "studiolights", "world"))
+                    
+                    # Specific path for this user's installation
+                    possible_paths.append(r"C:\Program Files\Blender Foundation\Blender 4.4\4.4\datafiles\studiolights\world")
+                    
+                    # Try to find the studio lights directory
+                    studio_lights_dir = None
+                    for path in possible_paths:
+                        if os.path.exists(path):
+                            print(f"Found studio lights directory: {path}")
+                            studio_lights_dir = path
+                            break
+                    
+                    if not studio_lights_dir:
+                        print("Could not find studio lights directory, using fallback")
+                        studio_lights_dir = possible_paths[0]  # Use the first path as fallback
+                    
+                    # Find the specific HDRI to use - these are common in Blender 4.4
+                    common_hdri_files = [
+                        "forest.exr",      # Forest environment - good general lighting (preferred)
+                        "studio.exr",      # Clean studio environment
+                        "city.exr",        # Urban environment
+                        "courtyard.exr",   # Outdoor courtyard
+                        "night.exr",       # Night environment
+                        "sunrise.exr",     # Sunrise lighting
+                        "sunset.exr",      # Sunset lighting
+                    ]
+                    
+                    # Try to find an existing HDRI file
+                    hdri_path = None
+                    for hdri_filename in common_hdri_files:
+                        path = os.path.join(studio_lights_dir, hdri_filename)
+                        if os.path.exists(path):
+                            hdri_path = path
+                            print(f"Found HDRI file: {hdri_path}")
+                            break
+                    
+                    # If no common HDRI was found, try any .exr file
+                    if not hdri_path and os.path.exists(studio_lights_dir):
+                        try:
+                            exr_files = [f for f in os.listdir(studio_lights_dir) if f.endswith('.exr')]
+                            if exr_files:
+                                hdri_filename = exr_files[0]
+                                hdri_path = os.path.join(studio_lights_dir, hdri_filename)
+                                print(f"Using alternative HDRI: {hdri_path}")
+                        except Exception as e:
+                            print(f"Error listing studio lights directory: {str(e)}")
+                    
+                    # Hardcoded paths as last resort
+                    if not hdri_path or not os.path.exists(hdri_path):
+                        direct_paths = [
+                            r"C:\Program Files\Blender Foundation\Blender 4.4\4.4\datafiles\studiolights\world\forest.exr",
+                            r"C:\Program Files\Blender Foundation\Blender 4.4\4.4\datafiles\studiolights\world\studio.exr",
+                            # Try both common locations
+                            os.path.join(studio_lights_dir, "forest.exr"),
+                            os.path.join(os.path.dirname(studio_lights_dir), "world", "forest.exr")
+                        ]
+                        for path in direct_paths:
+                            if os.path.exists(path):
+                                hdri_path = path
+                                print(f"Using hardcoded HDRI path: {hdri_path}")
+                                break
+                    
+                    if hdri_path and os.path.exists(hdri_path):
+                        print(f"Using HDRI path: {hdri_path}")
+                    else:
+                        print("WARNING: Could not find any suitable HDRI file!")
+                
+                    # Create a new world to use for rendering
+                    new_world = None
+                    # First, check if we already have a world with this name
+                    world_name = f"BasedPlayblast_StudioHDRI"
+                    if world_name in bpy.data.worlds:
+                        new_world = bpy.data.worlds[world_name]
+                    else:
+                        # Create a new world
+                        new_world = bpy.data.worlds.new(world_name)
+                    
+                    # Setup world to use the HDRI
+                    new_world.use_nodes = True
+                    nodes = new_world.node_tree.nodes
+                    
+                    # Clear existing nodes
+                    for node in nodes:
+                        nodes.remove(node)
+                    
+                    # Create background and output nodes
+                    background = nodes.new(type='ShaderNodeBackground')
+                    output = nodes.new(type='ShaderNodeOutputWorld')
+                    
+                    # Set background strength for proper lighting intensity
+                    if hasattr(background.inputs[1], 'default_value'):
+                        background.inputs[1].default_value = 1.0  # Strength of 1.0 is standard for material preview
+                    
+                    # Set a default color for the background (light gray to provide some lighting)
+                    if hasattr(background.inputs[0], 'default_value'):
+                        background.inputs[0].default_value = (0.8, 0.8, 0.8, 1.0)
+                    
+                    # Position nodes
+                    background.location = (0, 0)
+                    output.location = (300, 0)
+                    
+                    # Link nodes for basic background
+                    links = new_world.node_tree.links
+                    links.new(background.outputs["Background"], output.inputs["Surface"])
+                    
+                    # Only add the texture node if we have a valid HDRI
+                    if hdri_path and os.path.exists(hdri_path):
+                        # Create texture node
+                        tex_node = nodes.new(type='ShaderNodeTexEnvironment')
+                        tex_node.location = (-300, 0)
+                        
+                        # Load the HDRI file
+                        try:
+                            # Try to load the image with performance optimizations
+                            image = bpy.data.images.load(hdri_path, check_existing=True)
+                            tex_node.image = image
+                            
+                            # Optimize the image for rendering performance
+                            if hasattr(image, 'colorspace_settings'):
+                                # Use a proper linear colorspace from the available options
+                                # "Linear" alone isn't valid in Blender 4.4
+                                try:
+                                    image.colorspace_settings.name = 'Linear Rec.709'  # Most common linear space
+                                except:
+                                    # If that fails, try a different linear option
+                                    try:
+                                        image.colorspace_settings.name = 'Linear ACES'
+                                    except:
+                                        # Just use the default - don't change it
+                                        pass
+                            
+                            # Link the texture to background
+                            links.new(tex_node.outputs["Color"], background.inputs["Color"])
+                            print(f"Successfully loaded HDRI: {hdri_path}")
+                        except Exception as e:
+                            print(f"Error loading HDRI: {str(e)}")
+                            print("Using default background color instead")
+                    else:
+                        print("No valid HDRI path found - using default background color")
+                    
+                    # Set the world for rendering
+                    scene.world = new_world
+                    
+                    # Set the appropriate attribute for EEVEE settings
+                    eevee_attr = 'eevee' if hasattr(scene, 'eevee') else 'eevee_next'
+                    eevee = getattr(scene, eevee_attr) if hasattr(scene, eevee_attr) else None
+                    
+                    if eevee:
+                        # For material preview, we need to use the environment rather than studio lights
+                        if hasattr(eevee, 'use_scene_lights'):
+                            eevee.use_scene_lights = False
+                            print(f"Disabled scene lights for EEVEE render")
+                        if hasattr(eevee, 'use_scene_world'):
+                            # THIS IS IMPORTANT - we're using our own world node setup, not studio light
+                            eevee.use_scene_world = True
+                            print(f"Enabled scene world for EEVEE render")
+                            
+                        # Use minimum possible samples for fastest rendering
+                        if hasattr(eevee, 'taa_render_samples'):
+                            eevee.taa_render_samples = 4
+                            print(f"Set render samples to 4")
+                        
+                        # Disable features not used in material preview
+                        if hasattr(eevee, 'use_bloom'):
+                            eevee.use_bloom = False
+                        if hasattr(eevee, 'use_ssr'):
+                            eevee.use_ssr = False
+                        if hasattr(eevee, 'use_gtao'):
+                            eevee.use_gtao = False
+                        if hasattr(eevee, 'use_volumetric_lights'):
+                            eevee.use_volumetric_lights = False
+                        
+                        # Disable global illumination
+                        if hasattr(eevee, 'gi_diffuse_bounces'):
+                            eevee.gi_diffuse_bounces = 0
+                        
+                        # Set additional minimum quality settings
+                        if hasattr(eevee, 'shadow_cube_size'):
+                            eevee.shadow_cube_size = '64'  # Minimum shadow resolution
+                        if hasattr(eevee, 'shadow_cascade_size'):
+                            eevee.shadow_cascade_size = '64'  # Minimum shadow resolution
+                        if hasattr(eevee, 'use_soft_shadows'):
+                            eevee.use_soft_shadows = False  # Disable soft shadows
+                        if hasattr(eevee, 'sss_samples'):
+                            eevee.sss_samples = 1  # Minimum subsurface scattering samples
+                        if hasattr(eevee, 'volumetric_samples'):
+                            eevee.volumetric_samples = 1  # Minimum volumetric samples
+                            
+                        # Additional performance optimizations
+                        # Disable motion blur
+                        if hasattr(eevee, 'use_motion_blur'):
+                            eevee.use_motion_blur = False
+                            
+                        # Disable ambient occlusion (AO)
+                        if hasattr(eevee, 'use_gtao'):
+                            eevee.use_gtao = False
+                            
+                            # Disable screen space reflections entirely
+                            if hasattr(eevee, 'use_ssr'):
+                                eevee.use_ssr = False
+                        
+                        # Reduce texture size limit for faster material evaluation
+                        if hasattr(scene.render, 'texture_limit'):
+                            scene.render.texture_limit = '1024'
+                            
+                        # Enable simplify settings for render
+                        if hasattr(scene.render, 'use_simplify'):
+                            scene.render.use_simplify = True
+                            
+                            # Set maximum simplification
+                            if hasattr(scene.render, 'simplify_subdivision'):
+                                scene.render.simplify_subdivision = 0
+                            if hasattr(scene.render, 'simplify_child_particles'):
+                                scene.render.simplify_child_particles = 0
+                            if hasattr(scene.render, 'simplify_volumes'):
+                                scene.render.simplify_volumes = 0
+                                
+                        # Optimize compositor settings
+                        scene.use_nodes = False  # Disable compositor nodes
+                            
+                        # Use smaller tile size for faster updating
+                        if hasattr(eevee, 'tile_size'):
+                            eevee.tile_size = '8'  # Use 8x8 tiles for faster rendering
+                        
+                        # Disable film transparency if not needed
+                        if hasattr(scene.render, 'film_transparent'):
+                            scene.render.film_transparent = False
+                                            
+                        # Ensure background is colored by the environment
+                        background = new_world.node_tree.nodes.get('Background')
+                        if background and hasattr(background.inputs[0], 'default_value'):
+                            # Make sure the background node uses the HDRI color
+                            pass  # Already properly set up in node setup
+                            
+                        print(f"All EEVEE settings set to minimum quality for fastest rendering")
+                        
+                        # Save original settings to restore later
+                        props.original_settings_extended = str(original_light_states)
+                    else:
+                        self.report({'WARNING'}, f"Could not find EEVEE settings - material preview may not render correctly")
+                
+                except Exception as e:
+                    self.report({'WARNING'}, f"Note: Couldn't set all EEVEE settings: {str(e)}")
             else:
                 # For SOLID or WIREFRAME, use Workbench
                 scene.render.engine = 'BLENDER_WORKBENCH'
@@ -1095,6 +1560,7 @@ class BPL_OT_restore_original_settings(Operator):
         
         try:
             import json
+            import ast  # For evaluating the saved light states
             original = json.loads(props.original_settings)
             
             # Restore render settings
@@ -1112,6 +1578,17 @@ class BPL_OT_restore_original_settings(Operator):
             # Restore render engine
             if 'render_engine' in original:
                 scene.render.engine = original['render_engine']
+                
+            # Restore world if it exists
+            if 'world' in original and original['world']:
+                if original['world'] in bpy.data.worlds:
+                    scene.world = bpy.data.worlds[original['world']]
+                else:
+                    # If the exact world isn't found, create a default world
+                    scene.world = bpy.data.worlds.new("Default")
+            elif 'world' in original and not original['world']:
+                # Original had no world
+                scene.world = None
             
             # Restore camera if it exists
             if original['camera'] and original['camera'] in scene.objects:
@@ -1131,6 +1608,30 @@ class BPL_OT_restore_original_settings(Operator):
             scene.render.use_stamp_scene = original['use_stamp_scene']
             scene.render.use_stamp_note = original['use_stamp_note']
             scene.render.stamp_note_text = original['stamp_note_text']
+            
+            # Restore any lights that were disabled
+            if hasattr(props, 'original_settings_extended') and props.original_settings_extended:
+                try:
+                    # Convert the string back to a dictionary
+                    light_states = ast.literal_eval(props.original_settings_extended)
+                    
+                    # Restore each light's settings
+                    for light_name, states in light_states.items():
+                        if light_name in scene.objects:
+                            light = scene.objects[light_name]
+                            
+                            # Restore visibility states
+                            light.hide_viewport = states['hide_viewport']
+                            light.hide_render = states['hide_render']
+                            light.visible_camera = states['visible_camera']
+                            light.visible_diffuse = states['visible_diffuse']
+                            light.visible_glossy = states['visible_glossy']
+                            light.visible_transmission = states['visible_transmission']
+                            light.visible_volume_scatter = states['visible_volume_scatter']
+                            
+                            print(f"Restored light: {light_name}")
+                except Exception as e:
+                    self.report({'WARNING'}, f"Could not restore light states: {str(e)}")
             
             # Find 3D views and restore
             for a in context.screen.areas:
@@ -1154,6 +1655,8 @@ class BPL_OT_restore_original_settings(Operator):
             
             # Clear the stored original settings
             props.original_settings = ""
+            if hasattr(props, 'original_settings_extended'):
+                props.original_settings_extended = ""
             
             self.report({'INFO'}, "Original settings restored")
             return {'FINISHED'}

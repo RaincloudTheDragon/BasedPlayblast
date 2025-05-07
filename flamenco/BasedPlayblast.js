@@ -127,8 +127,8 @@ function authorPlayblastTasks(settings, playblastDir, playblastOutput) {
                 "--python-expr", `
 import bpy
 
-# Use standard render for animation with existing blend file settings
-bpy.ops.render.render(animation=True)
+# Just render the specified frames via --render-frame
+# Skip using animation=True which would render all frames
 `,
                 "--render-output", path.join(playblastDir, path.basename(playblastOutput)),
                 "--render-format", settings.format,
