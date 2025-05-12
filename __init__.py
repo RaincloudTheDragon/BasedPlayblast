@@ -1,7 +1,7 @@
 bl_info = {
     "name": "BasedPlayblast",
     "author": "RaincloudTheDragon",
-    "version": (0, 3, 1),
+    "version": (0, 3, 2),
     "blender": (4, 3, 0),
     "location": "Properties > Output > BasedPlayblast",
     "description": "Easily create playblasts from Blender",
@@ -257,6 +257,12 @@ class BPLProperties(PropertyGroup):
     auto_disable_overlays: BoolProperty(  # type: ignore
         name="Auto Disable Overlays",
         description="Automatically disable viewport overlays during playblast",
+        default=True
+    )
+    
+    enable_depth_of_field: BoolProperty(  # type: ignore
+        name="Enable Depth of Field",
+        description="Enable camera depth of field effect in playblast",
         default=True
     )
     
@@ -602,6 +608,11 @@ class BPL_OT_create_playblast(Operator):
                 camera_obj = context.scene.objects.get(props.camera_object)
                 if camera_obj and camera_obj.type == 'CAMERA':
                     scene.camera = camera_obj
+            
+            # Set frame range if using manual range
+            if not props.use_scene_frame_range:
+                scene.frame_start = props.start_frame
+                scene.frame_end = props.end_frame
             
             # Setup metadata
             if props.show_metadata:
@@ -1455,11 +1466,40 @@ class BPL_OT_apply_blast_settings(Operator):
                 if found_3d_view:
                     scene.display.shading.light = space.shading.light
                     scene.display.shading.color_type = space.shading.color_type
-                    scene.display.shading.show_object_outline = space.shading.show_object_outline
+                    if hasattr(scene.display.shading, 'show_object_outline'):
+                        scene.display.shading.show_object_outline = space.shading.show_object_outline
                     if props.display_mode == 'WIREFRAME':
                         scene.display.shading.type = 'WIREFRAME'
                     else:
                         scene.display.shading.type = 'SOLID'
+                
+                # Disable anti-aliasing for maximum speed in workbench
+                # Viewport anti-aliasing
+                if hasattr(scene.display, 'render_aa'):
+                    scene.display.render_aa = 'OFF'
+                # Render anti-aliasing (render passes)
+                if hasattr(scene.display.shading, 'render_pass'):
+                    scene.display.shading.render_pass = 'COMBINED'
+                # Disable any other performance-impacting settings
+                if hasattr(scene.display.shading, 'show_cavity'):
+                    scene.display.shading.show_cavity = False
+                # The show_shadow attribute doesn't exist in Blender 4.4
+                # if hasattr(scene.display.shading, 'show_shadow'):
+                #     scene.display.shading.show_shadow = False
+                if hasattr(scene.display.shading, 'show_object_outline'):
+                    scene.display.shading.show_object_outline = False
+                if hasattr(scene.display.shading, 'show_specular_highlight'):
+                    scene.display.shading.show_specular_highlight = False
+                
+                # Handle depth of field in Workbench
+                if hasattr(scene.display.shading, 'use_dof'):
+                    scene.display.shading.use_dof = props.enable_depth_of_field
+                    if props.enable_depth_of_field:
+                        print(f"Enabled Workbench depth of field")
+                    else:
+                        print(f"Disabled Workbench depth of field")
+                
+                print(f"Workbench anti-aliasing disabled for maximum performance")
             
             # Set resolution based on mode
             if props.resolution_mode == 'PRESET':
@@ -1795,6 +1835,7 @@ class BPL_PT_main_panel(Panel):
         if context.scene.get("basedplayblast_show_display", False):
             display_box.prop(props, "display_mode")
             display_box.prop(props, "auto_disable_overlays")
+            display_box.prop(props, "enable_depth_of_field")
         
         # Metadata - collapsible
         meta_box = layout.box()
