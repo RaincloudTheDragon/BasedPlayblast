@@ -27,6 +27,8 @@ const JOB_TYPE = {
         // Playblast specific settings
         { key: "resolution_percentage", type: "int32", default: 100, propargs: {min: 1, max: 100}, visible: "submission",
           description: "Percentage of the render resolution to use for playblast"},
+        { key: "keep_frames", type: "bool", default: false, visible: "submission",
+          description: "Keep the individual playblast frames after video creation"},
 
         // Automatically evaluated settings:
         { key: "blendfile", type: "string", required: true, description: "Path of the Blend file to playblast", visible: "web" },
@@ -194,16 +196,18 @@ function authorCreateVideoTask(settings, playblastDir, baseDir) {
     
     videoTask.addCommand(ffmpegCommand);
     
-    // Create a separate Blender task for cleanup
-    const cleanupTask = author.Task('playblast-cleanup', 'blender');
-    
-    // Command to delete the frame images and job folder after video creation using Blender Python
-    const cleanupCommand = author.Command("blender-render", {
-        exe: "{blender}",
-        exeArgs: "{blenderArgs}",
-        blendfile: "",  // Empty to avoid loading a blend file
-        argsBefore: ["-b", "--python-expr"],
-        args: [`
+    // Only create cleanup task if keep_frames is false
+    if (!settings.keep_frames) {
+        // Create a separate Blender task for cleanup
+        const cleanupTask = author.Task('playblast-cleanup', 'blender');
+        
+        // Command to delete the frame images and job folder after video creation using Blender Python
+        const cleanupCommand = author.Command("blender-render", {
+            exe: "{blender}",
+            exeArgs: "{blenderArgs}",
+            blendfile: "",  // Empty to avoid loading a blend file
+            argsBefore: ["-b", "--python-expr"],
+            args: [`
 import os
 import glob
 import sys
@@ -252,15 +256,21 @@ except Exception as e:
 
 sys.exit(0)  # Exit with success code regardless of folder deletion
 `]
-    });
-    
-    cleanupTask.addCommand(cleanupCommand);
-    
-    // Make the cleanup task dependent on the video task
-    cleanupTask.addDependency(videoTask);
-    
-    print(`Creating output video for playblast and separate cleanup task for temporary frames`);
-    
-    // Return an array of tasks instead of just one
-    return [videoTask, cleanupTask];
+        });
+        
+        cleanupTask.addCommand(cleanupCommand);
+        
+        // Make the cleanup task dependent on the video task
+        cleanupTask.addDependency(videoTask);
+        
+        print(`Creating output video for playblast and cleanup task for temporary frames`);
+        
+        // Return both tasks
+        return [videoTask, cleanupTask];
+    } else {
+        print(`Creating output video for playblast (keeping frames as requested)`);
+        
+        // Return only the video task
+        return [videoTask];
+    }
 }
