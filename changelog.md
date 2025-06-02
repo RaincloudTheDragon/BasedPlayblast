@@ -11,3 +11,5 @@ v0.2.3
     - Attempted fix for playblast hanging, still broken in some circumstances.
     - Added Updater in addon preferences
     - Fixed manual scene range
+v0.3.0
+    - Flamenco job: Switched to JPG for fastest saving

@@ -33,9 +33,9 @@ const JOB_TYPE = {
         // Automatically evaluated settings:
         { key: "blendfile", type: "string", required: true, description: "Path of the Blend file to playblast", visible: "web" },
         { key: "fps", type: "float", eval: "C.scene.render.fps / C.scene.render.fps_base", visible: "hidden" },
-        { key: "format", type: "string", required: true, default: "PNG", visible: "web",
+        { key: "format", type: "string", required: true, default: "JPEG", visible: "web",
           description: "Image format for playblast frames" },
-        { key: "image_file_extension", type: "string", required: true, default: ".png", visible: "hidden",
+        { key: "image_file_extension", type: "string", required: true, default: ".jpg", visible: "hidden",
           description: "File extension used when creating playblast images" },
         { key: "scene", type: "string", required: true, eval: "C.scene.name", visible: "web",
           description: "Name of the scene to playblast."},
