@@ -1372,6 +1372,23 @@ class BPL_OT_apply_blast_settings(Operator):
                             eevee.use_scene_world = True
                             print(f"Enabled scene world for EEVEE render")
                             
+                        # CRITICAL: Always disable shadows and raytracing for material preview
+                        if hasattr(eevee, 'use_shadows'):
+                            eevee.use_shadows = False
+                            print(f"Disabled shadows for material preview")
+                        if hasattr(eevee, 'use_soft_shadows'):
+                            eevee.use_soft_shadows = False
+                            print(f"Disabled soft shadows for material preview")
+                        if hasattr(eevee, 'use_raytrace'):
+                            eevee.use_raytrace = False
+                            print(f"Disabled raytracing for material preview")
+                        if hasattr(eevee, 'use_ssr'):
+                            eevee.use_ssr = False
+                            print(f"Disabled screen space reflections for material preview")
+                        if hasattr(eevee, 'use_ssr_refraction'):
+                            eevee.use_ssr_refraction = False
+                            print(f"Disabled screen space refractions for material preview")
+                            
                         # Use minimum possible samples for fastest rendering
                         if hasattr(eevee, 'taa_render_samples'):
                             eevee.taa_render_samples = 4
@@ -1424,13 +1441,22 @@ class BPL_OT_apply_blast_settings(Operator):
                         if hasattr(scene.render, 'use_simplify'):
                             scene.render.use_simplify = True
                             
-                            # Set maximum simplification
+                            # CRITICAL: Always set maximum simplification for material preview
                             if hasattr(scene.render, 'simplify_subdivision'):
                                 scene.render.simplify_subdivision = 0
+                                print(f"Set maximum subdivision simplification (0) for material preview")
                             if hasattr(scene.render, 'simplify_child_particles'):
                                 scene.render.simplify_child_particles = 0
+                                print(f"Set maximum particle simplification (0) for material preview")
                             if hasattr(scene.render, 'simplify_volumes'):
                                 scene.render.simplify_volumes = 0
+                                print(f"Set maximum volume simplification (0) for material preview")
+                            if hasattr(scene.render, 'simplify_shadows'):
+                                scene.render.simplify_shadows = 0
+                                print(f"Set maximum shadow simplification (0) for material preview")
+                            if hasattr(scene.render, 'simplify_culling'):
+                                scene.render.simplify_culling = True
+                                print(f"Enabled culling simplification for material preview")
                                 
                         # Optimize compositor settings
                         scene.use_nodes = False  # Disable compositor nodes
