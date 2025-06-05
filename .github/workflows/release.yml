@@ -16,10 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
+      - name: Install dependencies
+        run: pip install toml
+      
       - name: Get Version
         id: get_version
         run: |
-          VERSION=$(python -c "import json; v=json.load(open('bl_info.json'))['version']; print(f'{v[0]}.{v[1]}.{v[2]}')")
+          VERSION=$(python -c "import toml; print(toml.load('blender_manifest.toml')['version'])")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "zip_name=BasedPlayblast.v$VERSION.zip" >> $GITHUB_OUTPUT
       
@@ -28,18 +31,12 @@ jobs:
           # Create a temporary directory structure
           mkdir -p addon_files/BasedPlayblast
           
-          # Copy only the required files into the addon directory
-          cp __init__.py README.md addon_files/BasedPlayblast/
-          # Copy the updater files
-          cp addon_updater.py addon_updater_ops.py addon_files/BasedPlayblast/          
+          # Copy the required files for Blender Extensions
+          cp __init__.py README.md blender_manifest.toml addon_files/BasedPlayblast/
           
           # Include other necessary files if they exist
           if [ -f "requirements.txt" ]; then
             cp requirements.txt addon_files/BasedPlayblast/
-          fi
-          
-          if [ -f "bl_info.json" ]; then
-            cp bl_info.json addon_files/BasedPlayblast/
           fi
           
           # Create the zip from the temporary directory
