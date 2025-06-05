@@ -1,7 +1,7 @@
 bl_info = {
     "name": "BasedPlayblast",
     "author": "RaincloudTheDragon",
-    "version": (0, 3, 2),
+    "version": (0, 3, 3),
     "blender": (4, 3, 0),
     "location": "Properties > Output > BasedPlayblast",
     "description": "Easily create playblasts from Blender",
@@ -942,25 +942,107 @@ class BPL_OT_apply_blast_settings(Operator):
         scene = context.scene
         props = scene.basedplayblast
         
-        # First, save ALL original settings if not already saved
-        if not props.original_settings:
-            import json
-            
-            # Store comprehensive render settings
-            original_settings = {
-                # Basic render settings
+        # First, save ALL original settings - always save fresh settings each time
+        # Clear any previously saved settings to ensure we get current state
+        props.original_settings = ""
+        props.original_settings_extended = ""
+        
+        # TEMPORARY TEST: Set a minimal test setting to verify restore works
+        import json
+        test_settings = {
+            'render_engine': scene.render.engine,
+            'cycles': {
+                'samples': getattr(scene.cycles, 'samples', 128),
+                'use_denoising': getattr(scene.cycles, 'use_denoising', True)
+            }
+        }
+        props.original_settings = json.dumps(test_settings)
+        print(f"TEMP TEST: Set minimal test settings - engine: {test_settings['render_engine']}, cycles samples: {test_settings['cycles']['samples']}")
+        
+        import json
+        
+        # COMPREHENSIVE SETTINGS STORAGE - Save EVERYTHING
+        print(f"Saving comprehensive render settings for engine: {scene.render.engine}")
+        print(f"DEBUG: Starting comprehensive settings save process")
+        
+        def safe_getattr(obj, attr, default=None):
+            """Safely get attribute with fallback"""
+            try:
+                return getattr(obj, attr, default)
+            except:
+                return default
+        
+        def make_json_serializable(obj):
+            """Convert object to JSON-serializable format"""
+            if isinstance(obj, dict):
+                # Handle dictionaries - recursively process values
+                return {key: make_json_serializable(value) for key, value in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                # Handle lists and tuples
+                return [make_json_serializable(item) for item in obj]
+            elif isinstance(obj, (str, int, float, bool, type(None))):
+                # Already JSON serializable
+                return obj
+            else:
+                # Convert everything else to string
+                try:
+                    json.dumps(obj)  # Test if it's serializable
+                    return obj
+                except:
+                    return str(obj)
+        
+        original_settings = {
+                # SCENE.RENDER - Complete render settings
+                'render_engine': scene.render.engine,
                 'filepath': scene.render.filepath,
                 'resolution_x': scene.render.resolution_x,
                 'resolution_y': scene.render.resolution_y,
                 'resolution_percentage': scene.render.resolution_percentage,
+                'pixel_aspect_x': scene.render.pixel_aspect_x,
+                'pixel_aspect_y': scene.render.pixel_aspect_y,
                 'use_file_extension': scene.render.use_file_extension,
                 'use_overwrite': scene.render.use_overwrite,
                 'use_placeholder': scene.render.use_placeholder,
                 'frame_start': scene.frame_start,
                 'frame_end': scene.frame_end,
                 'frame_step': scene.frame_step,
+                'frame_current': scene.frame_current,
                 
-                # Image settings - comprehensive
+                # Film settings
+                'film_transparent': scene.render.film_transparent,
+                'filter_size': scene.render.filter_size,
+                
+                # Performance settings
+                'use_persistent_data': scene.render.use_persistent_data,
+                'use_simplify': scene.render.use_simplify,
+                'simplify_subdivision': scene.render.simplify_subdivision,
+                'simplify_child_particles': scene.render.simplify_child_particles,
+                'simplify_volumes': scene.render.simplify_volumes,
+                'simplify_subdivision_render': safe_getattr(scene.render, 'simplify_subdivision_render', 6),
+                'simplify_child_particles_render': safe_getattr(scene.render, 'simplify_child_particles_render', 1.0),
+                'simplify_volumes_render': safe_getattr(scene.render, 'simplify_volumes_render', 1.0),
+                
+                # Motion blur
+                'use_motion_blur': scene.render.use_motion_blur,
+                'motion_blur_shutter': scene.render.motion_blur_shutter,
+                'motion_blur_shutter_curve': str(safe_getattr(scene.render, 'motion_blur_shutter_curve', 'AUTO')),
+                'rolling_shutter_type': safe_getattr(scene.render, 'rolling_shutter_type', 'NONE'),
+                'rolling_shutter_duration': safe_getattr(scene.render, 'rolling_shutter_duration', 0.1),
+                
+                # Threading
+                'threads_mode': scene.render.threads_mode,
+                'threads': scene.render.threads,
+                
+                # Memory and caching
+                'tile_x': safe_getattr(scene.render, 'tile_x', 64),
+                'tile_y': safe_getattr(scene.render, 'tile_y', 64),
+                'use_save_buffers': safe_getattr(scene.render, 'use_save_buffers', False),
+                
+                # Preview and display
+                'display_mode': context.preferences.view.render_display_type,
+                'preview_pixel_size': safe_getattr(scene.render, 'preview_pixel_size', 'AUTO'),
+                
+                # SCENE.RENDER.IMAGE_SETTINGS - Complete image settings
                 'image_settings': {
                     'file_format': scene.render.image_settings.file_format,
                     'color_mode': scene.render.image_settings.color_mode,
@@ -968,34 +1050,50 @@ class BPL_OT_apply_blast_settings(Operator):
                     'compression': scene.render.image_settings.compression,
                     'quality': scene.render.image_settings.quality,
                     'use_preview': scene.render.image_settings.use_preview,
+                    'exr_codec': safe_getattr(scene.render.image_settings, 'exr_codec', 'ZIP'),
+                    'use_zbuffer': safe_getattr(scene.render.image_settings, 'use_zbuffer', False),
+                    'jpeg2k_codec': safe_getattr(scene.render.image_settings, 'jpeg2k_codec', 'JP2'),
+                    'tiff_codec': safe_getattr(scene.render.image_settings, 'tiff_codec', 'DEFLATE'),
                 },
                 
-                # Render engine and related settings
-                'render_engine': scene.render.engine,
+                # SCENE.RENDER.FFMPEG - Complete FFmpeg settings
+                'ffmpeg': {
+                    'format': scene.render.ffmpeg.format,
+                    'codec': scene.render.ffmpeg.codec,
+                    'video_bitrate': scene.render.ffmpeg.video_bitrate,
+                    'minrate': scene.render.ffmpeg.minrate,
+                    'maxrate': scene.render.ffmpeg.maxrate,
+                    'buffersize': scene.render.ffmpeg.buffersize,
+                    'muxrate': scene.render.ffmpeg.muxrate,
+                    'packetsize': scene.render.ffmpeg.packetsize,
+                    'constant_rate_factor': scene.render.ffmpeg.constant_rate_factor,
+                    'gopsize': scene.render.ffmpeg.gopsize,
+                    'use_max_b_frames': safe_getattr(scene.render.ffmpeg, 'use_max_b_frames', False),
+                    'max_b_frames': safe_getattr(scene.render.ffmpeg, 'max_b_frames', 2),
+                    'use_autosplit': safe_getattr(scene.render.ffmpeg, 'use_autosplit', False),
+                    'autosplit_size': safe_getattr(scene.render.ffmpeg, 'autosplit_size', 2048),
+                    'audio_codec': scene.render.ffmpeg.audio_codec,
+                    'audio_bitrate': scene.render.ffmpeg.audio_bitrate,
+                    'audio_channels': scene.render.ffmpeg.audio_channels,
+                    'audio_mixrate': scene.render.ffmpeg.audio_mixrate,
+                    'audio_volume': scene.render.ffmpeg.audio_volume,
+                },
+                
+                # Scene/world settings
                 'world': scene.world.name if scene.world else "",
                 'use_nodes': scene.use_nodes,
                 
-                # Film/transparency settings
-                'film_transparent': scene.render.film_transparent,
-                'filter_size': scene.render.filter_size,
+                # Compositing settings
+                'use_compositing': scene.render.use_compositing,
+                'use_sequencer': scene.render.use_sequencer,
                 
-                # Sampling and performance
-                'use_persistent_data': scene.render.use_persistent_data,
-                'use_simplify': scene.render.use_simplify,
-                'simplify_subdivision': scene.render.simplify_subdivision,
-                'simplify_child_particles': scene.render.simplify_child_particles,
-                'simplify_volumes': scene.render.simplify_volumes,
-                
-                # Motion blur and other effects
-                'use_motion_blur': scene.render.use_motion_blur,
-                'motion_blur_shutter': scene.render.motion_blur_shutter,
-                
-                # Threading and tiles
-                'threads_mode': scene.render.threads_mode,
-                'threads': scene.render.threads,
-                
-                # Preview and display
-                'display_mode': context.preferences.view.render_display_type,
+                # Border and crop settings
+                'use_border': scene.render.use_border,
+                'border_min_x': scene.render.border_min_x,
+                'border_max_x': scene.render.border_max_x,
+                'border_min_y': scene.render.border_min_y,
+                'border_max_y': scene.render.border_max_y,
+                'use_crop_to_border': scene.render.use_crop_to_border,
                 
                 # Metadata settings - comprehensive
                 'use_stamp': scene.render.use_stamp,
@@ -1013,94 +1111,195 @@ class BPL_OT_apply_blast_settings(Operator):
                 'use_stamp_memory': scene.render.use_stamp_memory,
                 'use_stamp_hostname': scene.render.use_stamp_hostname,
                 'stamp_font_size': scene.render.stamp_font_size,
-                'stamp_foreground': list(scene.render.stamp_foreground),
-                'stamp_background': list(scene.render.stamp_background),
+                'stamp_foreground': [float(x) for x in scene.render.stamp_foreground] if hasattr(scene.render.stamp_foreground, '__iter__') else [1.0, 1.0, 1.0, 1.0],
+                'stamp_background': [float(x) for x in scene.render.stamp_background] if hasattr(scene.render.stamp_background, '__iter__') else [0.0, 0.0, 0.0, 0.8],
                 
-                # FFmpeg settings if applicable
-                'ffmpeg': {
-                    'format': scene.render.ffmpeg.format,
-                    'codec': scene.render.ffmpeg.codec,
-                    'video_bitrate': scene.render.ffmpeg.video_bitrate,
-                    'minrate': scene.render.ffmpeg.minrate,
-                    'maxrate': scene.render.ffmpeg.maxrate,
-                    'buffersize': scene.render.ffmpeg.buffersize,
-                    'muxrate': scene.render.ffmpeg.muxrate,
-                    'packetsize': scene.render.ffmpeg.packetsize,
-                    'constant_rate_factor': scene.render.ffmpeg.constant_rate_factor,
-                    'gopsize': scene.render.ffmpeg.gopsize,
-                    'audio_codec': scene.render.ffmpeg.audio_codec,
-                    'audio_bitrate': scene.render.ffmpeg.audio_bitrate,
-                    'audio_channels': scene.render.ffmpeg.audio_channels,
-                    'audio_mixrate': scene.render.ffmpeg.audio_mixrate,
-                    'audio_volume': scene.render.ffmpeg.audio_volume,
-                },
-                
-                # Compositing settings
-                'use_compositing': scene.render.use_compositing,
-                'use_sequencer': scene.render.use_sequencer,
-                
-                # Border and crop settings
-                'use_border': scene.render.use_border,
-                'border_min_x': scene.render.border_min_x,
-                'border_max_x': scene.render.border_max_x,
-                'border_min_y': scene.render.border_min_y,
-                'border_max_y': scene.render.border_max_y,
-                'use_crop_to_border': scene.render.use_crop_to_border,
+                # Hair settings
+                'hair_type': safe_getattr(scene.render, 'hair_type', 'PATH'),
+                'hair_subdiv': safe_getattr(scene.render, 'hair_subdiv', 3),
+        }
+        
+        # SCENE.CYCLES - Always save Cycles settings regardless of current engine
+        print(f"DEBUG: About to start Cycles saving section")
+        try:
+            cycles = scene.cycles
+            print(f"Attempting to save Cycles settings...")
+            original_settings['cycles'] = {
+                    'device': safe_getattr(cycles, 'device', 'CPU'),
+                    'feature_set': safe_getattr(cycles, 'feature_set', 'SUPPORTED'),
+                    'shading_system': safe_getattr(cycles, 'shading_system', 'SVM'),
+                    'samples': safe_getattr(cycles, 'samples', 128),
+                    'preview_samples': safe_getattr(cycles, 'preview_samples', 32),
+                    'aa_samples': safe_getattr(cycles, 'aa_samples', 4),
+                    'preview_aa_samples': safe_getattr(cycles, 'preview_aa_samples', 4),
+                    'use_denoising': safe_getattr(cycles, 'use_denoising', True),
+                    'denoiser': safe_getattr(cycles, 'denoiser', 'OPENIMAGEDENOISE'),
+                    'denoising_input_passes': safe_getattr(cycles, 'denoising_input_passes', 'RGB_ALBEDO_NORMAL'),
+                    'use_denoising_input_passes': safe_getattr(cycles, 'use_denoising_input_passes', True),
+                    'denoising_prefilter': safe_getattr(cycles, 'denoising_prefilter', 'ACCURATE'),
+                    'use_adaptive_sampling': safe_getattr(cycles, 'use_adaptive_sampling', True),
+                    'adaptive_threshold': safe_getattr(cycles, 'adaptive_threshold', 0.01),
+                    'adaptive_min_samples': safe_getattr(cycles, 'adaptive_min_samples', 0),
+                    'time_limit': safe_getattr(cycles, 'time_limit', 0.0),
+                    'use_preview_adaptive_sampling': safe_getattr(cycles, 'use_preview_adaptive_sampling', False),
+                    'preview_adaptive_threshold': safe_getattr(cycles, 'preview_adaptive_threshold', 0.1),
+                    'preview_adaptive_min_samples': safe_getattr(cycles, 'preview_adaptive_min_samples', 0),
+                    'seed': safe_getattr(cycles, 'seed', 0),
+                    'use_animated_seed': safe_getattr(cycles, 'use_animated_seed', False),
+                    'sample_clamp_direct': safe_getattr(cycles, 'sample_clamp_direct', 0.0),
+                    'sample_clamp_indirect': safe_getattr(cycles, 'sample_clamp_indirect', 0.0),
+                    'light_sampling_threshold': safe_getattr(cycles, 'light_sampling_threshold', 0.01),
+                    'sample_all_lights_direct': safe_getattr(cycles, 'sample_all_lights_direct', True),
+                    'sample_all_lights_indirect': safe_getattr(cycles, 'sample_all_lights_indirect', True),
+                    'max_bounces': safe_getattr(cycles, 'max_bounces', 12),
+                    'diffuse_bounces': safe_getattr(cycles, 'diffuse_bounces', 4),
+                    'glossy_bounces': safe_getattr(cycles, 'glossy_bounces', 4),
+                    'transmission_bounces': safe_getattr(cycles, 'transmission_bounces', 12),
+                    'volume_bounces': safe_getattr(cycles, 'volume_bounces', 0),
+                    'transparent_max_bounces': safe_getattr(cycles, 'transparent_max_bounces', 8),
+                    'caustics_reflective': safe_getattr(cycles, 'caustics_reflective', True),
+                    'caustics_refractive': safe_getattr(cycles, 'caustics_refractive', True),
+                    'filter_type': safe_getattr(cycles, 'filter_type', 'GAUSSIAN'),
+                    'filter_width': safe_getattr(cycles, 'filter_width', 1.5),
+                    'pixel_filter_width': safe_getattr(cycles, 'pixel_filter_width', 1.5),
+                    'use_persistent_data': safe_getattr(cycles, 'use_persistent_data', False),
+                    'debug_use_spatial_splits': safe_getattr(cycles, 'debug_use_spatial_splits', False),
+                    'debug_use_hair_bvh': safe_getattr(cycles, 'debug_use_hair_bvh', True),
+                    'debug_bvh_type': safe_getattr(cycles, 'debug_bvh_type', 'DYNAMIC_BVH'),
+                    'debug_use_compact_bvh': safe_getattr(cycles, 'debug_use_compact_bvh', True),
+                    'tile_size': safe_getattr(cycles, 'tile_size', 256),
+                    'use_auto_tile': safe_getattr(cycles, 'use_auto_tile', False),
+                    'progressive': safe_getattr(cycles, 'progressive', 'PATH'),
+                    'use_square_samples': safe_getattr(cycles, 'use_square_samples', False),
+                    'blur_glossy': safe_getattr(cycles, 'blur_glossy', 0.0),
+                    'use_transparent_shadows': safe_getattr(cycles, 'use_transparent_shadows', True),
+                    'volume_step_rate': safe_getattr(cycles, 'volume_step_rate', 1.0),
+                    'volume_preview_step_rate': safe_getattr(cycles, 'volume_preview_step_rate', 1.0),
+                    'volume_max_steps': safe_getattr(cycles, 'volume_max_steps', 1024),
             }
-            
-            # Store engine-specific settings
-            if scene.render.engine == 'CYCLES':
-                cycles = scene.cycles
-                original_settings['cycles'] = {
-                    'device': cycles.device,
-                    'samples': cycles.samples,
-                    'preview_samples': cycles.preview_samples,
-                    'use_denoising': cycles.use_denoising,
-                    'use_adaptive_sampling': cycles.use_adaptive_sampling,
-                    'adaptive_threshold': cycles.adaptive_threshold,
-                    'adaptive_min_samples': cycles.adaptive_min_samples,
-                    'max_bounces': cycles.max_bounces,
-                    'diffuse_bounces': cycles.diffuse_bounces,
-                    'glossy_bounces': cycles.glossy_bounces,
-                    'transmission_bounces': cycles.transmission_bounces,
-                    'volume_bounces': cycles.volume_bounces,
-                    'caustics_reflective': cycles.caustics_reflective,
-                    'caustics_refractive': cycles.caustics_refractive,
-                    'pixel_filter_width': cycles.pixel_filter_width,
-                    'light_sampling_threshold': cycles.light_sampling_threshold,
-                    'use_persistent_data': cycles.use_persistent_data,
-                }
-            elif scene.render.engine in ['BLENDER_EEVEE', 'BLENDER_EEVEE_NEXT']:
-                eevee_attr = 'eevee' if hasattr(scene, 'eevee') else 'eevee_next'
-                eevee = getattr(scene, eevee_attr) if hasattr(scene, eevee_attr) else None
-                if eevee:
-                    original_settings['eevee'] = {
-                        'taa_render_samples': getattr(eevee, 'taa_render_samples', 64),
-                        'taa_samples': getattr(eevee, 'taa_samples', 16),
-                        'use_bloom': getattr(eevee, 'use_bloom', False),
-                        'use_ssr': getattr(eevee, 'use_ssr', False),
-                        'use_motion_blur': getattr(eevee, 'use_motion_blur', False),
-                        'use_volumetric_lights': getattr(eevee, 'use_volumetric_lights', False),
-                        'gi_diffuse_bounces': getattr(eevee, 'gi_diffuse_bounces', 3),
-                        'use_persistent_data': getattr(eevee, 'use_persistent_data', False),
-                        'shadow_cube_size': getattr(eevee, 'shadow_cube_size', '512'),
-                        'use_soft_shadows': getattr(eevee, 'use_soft_shadows', True),
-                        'use_shadows': getattr(eevee, 'use_shadows', True),
-                        'use_gtao': getattr(eevee, 'use_gtao', False),
-                    }
-            elif scene.render.engine == 'BLENDER_WORKBENCH':
-                original_settings['workbench'] = {
-                    'shading_type': scene.display.shading.type,
-                    'light': scene.display.shading.light,
-                    'color_type': scene.display.shading.color_type,
-                    'render_aa': getattr(scene.display, 'render_aa', 'FXAA'),
-                    'show_cavity': getattr(scene.display.shading, 'show_cavity', False),
-                    'show_object_outline': getattr(scene.display.shading, 'show_object_outline', False),
-                    'show_specular_highlight': getattr(scene.display.shading, 'show_specular_highlight', True),
-                    'use_dof': getattr(scene.display.shading, 'use_dof', False),
-                }
+            print(f"Successfully saved Cycles settings with {len(original_settings['cycles'])} keys")
+        except Exception as e:
+            print(f"Could not save Cycles settings: {e}")
+            original_settings['cycles'] = {}
+            print(f"Set empty Cycles settings due to error")
                 
-            props.original_settings = json.dumps(original_settings)
+        # SCENE.EEVEE - Always save EEVEE settings regardless of current engine
+        try:
+            eevee_attr = 'eevee' if hasattr(scene, 'eevee') else 'eevee_next'
+            eevee = getattr(scene, eevee_attr) if hasattr(scene, eevee_attr) else None
+            if eevee:
+                original_settings['eevee'] = {
+                    'taa_render_samples': safe_getattr(eevee, 'taa_render_samples', 64),
+                    'taa_samples': safe_getattr(eevee, 'taa_samples', 16),
+                    'use_bloom': safe_getattr(eevee, 'use_bloom', False),
+                    'bloom_threshold': safe_getattr(eevee, 'bloom_threshold', 0.8),
+                    'bloom_knee': safe_getattr(eevee, 'bloom_knee', 0.5),
+                    'bloom_radius': safe_getattr(eevee, 'bloom_radius', 6.5),
+                    'bloom_intensity': safe_getattr(eevee, 'bloom_intensity', 0.05),
+                    'use_ssr': safe_getattr(eevee, 'use_ssr', False),
+                    'use_ssr_refraction': safe_getattr(eevee, 'use_ssr_refraction', False),
+                    'ssr_max_roughness': safe_getattr(eevee, 'ssr_max_roughness', 0.5),
+                    'ssr_thickness': safe_getattr(eevee, 'ssr_thickness', 0.2),
+                    'ssr_border_fade': safe_getattr(eevee, 'ssr_border_fade', 0.075),
+                    'ssr_firefly_fac': safe_getattr(eevee, 'ssr_firefly_fac', 10.0),
+                    'use_motion_blur': safe_getattr(eevee, 'use_motion_blur', False),
+                    'motion_blur_samples': safe_getattr(eevee, 'motion_blur_samples', 8),
+                    'motion_blur_shutter': safe_getattr(eevee, 'motion_blur_shutter', 0.5),
+                    'use_volumetric_lights': safe_getattr(eevee, 'use_volumetric_lights', False),
+                    'volumetric_start': safe_getattr(eevee, 'volumetric_start', 0.1),
+                    'volumetric_end': safe_getattr(eevee, 'volumetric_end', 100.0),
+                    'volumetric_tile_size': safe_getattr(eevee, 'volumetric_tile_size', '8'),
+                    'volumetric_samples': safe_getattr(eevee, 'volumetric_samples', 64),
+                    'volumetric_sample_distribution': safe_getattr(eevee, 'volumetric_sample_distribution', 0.8),
+                    'use_volumetric_shadows': safe_getattr(eevee, 'use_volumetric_shadows', False),
+                    'volumetric_shadow_samples': safe_getattr(eevee, 'volumetric_shadow_samples', 16),
+                    'gi_diffuse_bounces': safe_getattr(eevee, 'gi_diffuse_bounces', 3),
+                    'gi_cubemap_resolution': safe_getattr(eevee, 'gi_cubemap_resolution', '512'),
+                    'gi_visibility_resolution': safe_getattr(eevee, 'gi_visibility_resolution', '16'),
+                    'gi_irradiance_smoothing': safe_getattr(eevee, 'gi_irradiance_smoothing', 0.1),
+                    'gi_glossy_clamp': safe_getattr(eevee, 'gi_glossy_clamp', 0.0),
+                    'gi_filter_quality': safe_getattr(eevee, 'gi_filter_quality', 1.0),
+                    'use_persistent_data': safe_getattr(eevee, 'use_persistent_data', False),
+                    'shadow_cube_size': safe_getattr(eevee, 'shadow_cube_size', '512'),
+                    'shadow_cascade_size': safe_getattr(eevee, 'shadow_cascade_size', '1024'),
+                    'use_shadow_high_bitdepth': safe_getattr(eevee, 'use_shadow_high_bitdepth', False),
+                    'use_soft_shadows': safe_getattr(eevee, 'use_soft_shadows', True),
+                    'use_shadows': safe_getattr(eevee, 'use_shadows', True),
+                    'light_threshold': safe_getattr(eevee, 'light_threshold', 0.01),
+                    'use_gtao': safe_getattr(eevee, 'use_gtao', False),
+                    'gtao_distance': safe_getattr(eevee, 'gtao_distance', 0.2),
+                    'gtao_factor': safe_getattr(eevee, 'gtao_factor', 1.0),
+                    'gtao_quality': safe_getattr(eevee, 'gtao_quality', 0.25),
+                    'use_overscan': safe_getattr(eevee, 'use_overscan', False),
+                    'overscan_size': safe_getattr(eevee, 'overscan_size', 3.0),
+                    'shadow_ray_count': safe_getattr(eevee, 'shadow_ray_count', 1),
+                    'shadow_step_count': safe_getattr(eevee, 'shadow_step_count', 6),
+                    'fast_gi_method': safe_getattr(eevee, 'fast_gi_method', 'GLOBAL_ILLUMINATION'),
+                    'fast_gi_ray_count': safe_getattr(eevee, 'fast_gi_ray_count', 4),
+                    'fast_gi_step_count': safe_getattr(eevee, 'fast_gi_step_count', 4),
+                    'fast_gi_quality': safe_getattr(eevee, 'fast_gi_quality', 0.25),
+                    'fast_gi_distance': safe_getattr(eevee, 'fast_gi_distance', 10.0),
+                }
+                print("Saved EEVEE settings")
+            else:
+                original_settings['eevee'] = {}
+        except Exception as e:
+            print(f"Could not save EEVEE settings: {e}")
+            original_settings['eevee'] = {}
+                
+        # SCENE.DISPLAY (WORKBENCH) settings
+        try:
+            original_settings['workbench'] = {
+                'shading_type': scene.display.shading.type,
+                'light': scene.display.shading.light,
+                'color_type': scene.display.shading.color_type,
+                'single_color': list(safe_getattr(scene.display.shading, 'single_color', (0.8, 0.8, 0.8))),
+                'background_type': safe_getattr(scene.display.shading, 'background_type', 'THEME'),
+                'background_color': list(safe_getattr(scene.display.shading, 'background_color', (0.05, 0.05, 0.05))),
+                'cavity_ridge_factor': safe_getattr(scene.display.shading, 'cavity_ridge_factor', 1.0),
+                'cavity_valley_factor': safe_getattr(scene.display.shading, 'cavity_valley_factor', 1.0),
+                'curvature_ridge_factor': safe_getattr(scene.display.shading, 'curvature_ridge_factor', 1.0),
+                'curvature_valley_factor': safe_getattr(scene.display.shading, 'curvature_valley_factor', 1.0),
+                'render_aa': safe_getattr(scene.display, 'render_aa', 'FXAA'),
+                'show_cavity': safe_getattr(scene.display.shading, 'show_cavity', False),
+                'show_object_outline': safe_getattr(scene.display.shading, 'show_object_outline', False),
+                'show_specular_highlight': safe_getattr(scene.display.shading, 'show_specular_highlight', True),
+                'use_dof': safe_getattr(scene.display.shading, 'use_dof', False),
+                'show_xray': safe_getattr(scene.display.shading, 'show_xray', False),
+                'xray_alpha': safe_getattr(scene.display.shading, 'xray_alpha', 0.5),
+                'show_shadows': safe_getattr(scene.display.shading, 'show_shadows', False),
+                'shadow_intensity': safe_getattr(scene.display.shading, 'shadow_intensity', 0.5),
+                'studio_light': safe_getattr(scene.display.shading, 'studio_light', 'DEFAULT'),
+                'studiolight_rotate_z': safe_getattr(scene.display.shading, 'studiolight_rotate_z', 0.0),
+                'studiolight_intensity': safe_getattr(scene.display.shading, 'studiolight_intensity', 1.0),
+                'studiolight_background_alpha': safe_getattr(scene.display.shading, 'studiolight_background_alpha', 0.0),
+                'studiolight_background_blur': safe_getattr(scene.display.shading, 'studiolight_background_blur', 0.0),
+            }
+            print("Saved Workbench settings")
+        except Exception as e:
+            print(f"Could not save Workbench settings: {e}")
+            original_settings['workbench'] = {}
+            
+        # Try to save the settings with detailed error reporting
+        try:
+            # Make sure all objects are JSON serializable
+            safe_settings = make_json_serializable(original_settings)
+            props.original_settings = json.dumps(safe_settings)
+            print(f"Comprehensive settings saved to JSON ({len(props.original_settings)} characters)")
+            print(f"Saved settings include: {list(original_settings.keys())}")
+            print(f"Cycles settings saved: {'cycles' in original_settings and bool(original_settings['cycles'])}")
+            if 'cycles' in original_settings:
+                print(f"Cycles settings keys: {list(original_settings['cycles'].keys())}")
+            print(f"EEVEE settings saved: {'eevee' in original_settings and bool(original_settings['eevee'])}")
+        except Exception as json_error:
+            print(f"ERROR: Failed to save settings to JSON: {str(json_error)}")
+            import traceback
+            traceback.print_exc()
+            # Don't clear the test settings - keep them so restore works
+            if not props.original_settings:
+                print(f"FALLBACK: Using minimal test settings since comprehensive save failed")
+            else:
+                print(f"KEEPING existing settings since JSON save failed")
         
         try:
             # Apply render engine and settings based on display mode
@@ -1140,9 +1339,9 @@ class BPL_OT_apply_blast_settings(Operator):
                             if hasattr(eevee, 'use_volumetric_lights'):
                                 eevee.use_volumetric_lights = False
                             
-                                                    # Use moderate global illumination
-                        if hasattr(eevee, 'gi_diffuse_bounces'):
-                            eevee.gi_diffuse_bounces = 1  # Just one bounce for indirect lighting
+                            # Use moderate global illumination
+                            if hasattr(eevee, 'gi_diffuse_bounces'):
+                                eevee.gi_diffuse_bounces = 1  # Just one bounce for indirect lighting
                         
                         # Set minimal ray and step settings for maximum performance
                         if hasattr(eevee, 'gi_irradiance_smoothing'):
@@ -1177,12 +1376,12 @@ class BPL_OT_apply_blast_settings(Operator):
                             eevee.fast_gi_quality = 0.25  # Low quality for speed
                         if hasattr(eevee, 'fast_gi_distance'):
                             eevee.fast_gi_distance = 1.0  # Short distance
-                            
-                        # Enable persistent data if available for faster animation rendering
-                        if hasattr(eevee, 'use_persistent_data'):
-                            eevee.use_persistent_data = True
-                            print(f"Enabled persistent data for faster EEVEE animation rendering")
-                            
+                                
+                            # Enable persistent data if available for faster animation rendering
+                            if hasattr(eevee, 'use_persistent_data'):
+                                eevee.use_persistent_data = True
+                                print(f"Enabled persistent data for faster EEVEE animation rendering")
+                                
                         print(f"Set EEVEE raytracing to 1 ray, 2 steps for maximum performance")
                         print(f"Applied optimized EEVEE settings for RENDERED mode")
                     elif current_engine == 'CYCLES':
@@ -1229,13 +1428,49 @@ class BPL_OT_apply_blast_settings(Operator):
                         if hasattr(cycles, 'use_adaptive_sampling'):
                             cycles.use_adaptive_sampling = True
                         if hasattr(cycles, 'adaptive_threshold'):
-                            cycles.adaptive_threshold = 0.5  # Very high threshold = faster convergence
+                            cycles.adaptive_threshold = 0.8  # Even higher threshold = faster convergence
                         if hasattr(cycles, 'adaptive_min_samples'):
                             cycles.adaptive_min_samples = 0  # Allow adaptive sampling to stop early
                             
                         # Use faster integrator settings
                         if hasattr(cycles, 'light_sampling_threshold'):
-                            cycles.light_sampling_threshold = 0.5
+                            cycles.light_sampling_threshold = 1.0  # Maximum threshold for fastest convergence
+                            
+                        # Disable expensive sampling features
+                        if hasattr(cycles, 'sample_clamp_direct'):
+                            cycles.sample_clamp_direct = 0.0  # No clamping for speed
+                        if hasattr(cycles, 'sample_clamp_indirect'):
+                            cycles.sample_clamp_indirect = 0.0  # No clamping for speed
+                        if hasattr(cycles, 'blur_glossy'):
+                            cycles.blur_glossy = 0.0  # Disable glossy blur
+                        if hasattr(cycles, 'sample_all_lights_direct'):
+                            cycles.sample_all_lights_direct = False  # Don't sample all lights
+                        if hasattr(cycles, 'sample_all_lights_indirect'):
+                            cycles.sample_all_lights_indirect = False  # Don't sample all lights
+                            
+                        # Use fastest filter and preview settings
+                        if hasattr(cycles, 'filter_type'):
+                            cycles.filter_type = 'BOX'  # Fastest filter type
+                        if hasattr(cycles, 'preview_samples'):
+                            cycles.preview_samples = 1  # Minimum viewport samples
+                        if hasattr(cycles, 'aa_samples'):
+                            cycles.aa_samples = 1  # Minimum anti-aliasing samples
+                            
+                        # Disable expensive transparency features
+                        if hasattr(cycles, 'use_transparent_shadows'):
+                            cycles.use_transparent_shadows = False
+                        if hasattr(cycles, 'transparent_max_bounces'):
+                            cycles.transparent_max_bounces = 0  # No transparent bounces
+                            
+                        # Optimize tile size for faster rendering
+                        if hasattr(cycles, 'tile_size'):
+                            cycles.tile_size = 64  # Small tiles for faster feedback
+                        if hasattr(cycles, 'use_auto_tile'):
+                            cycles.use_auto_tile = True  # Let Cycles optimize tile size
+                            
+                        # Use fastest integrator path
+                        if hasattr(cycles, 'progressive'):
+                            cycles.progressive = 'PATH'  # Use path tracing (usually fastest)
                             
                         # CRITICAL: Enable persistent data for much faster animation rendering
                         if hasattr(cycles, 'use_persistent_data'):
@@ -1250,6 +1485,12 @@ class BPL_OT_apply_blast_settings(Operator):
                             except:
                                 # If setting GPU fails, stick with current device
                                 pass
+                                
+                        # Additional GPU optimizations
+                        if hasattr(cycles, 'feature_set'):
+                            cycles.feature_set = 'SUPPORTED'  # Use only supported GPU features
+                        if hasattr(cycles, 'use_cpu_device'):
+                            cycles.use_cpu_device = False  # Force GPU only if available
                                 
                         print(f"Applied optimized Cycles settings for RENDERED mode")
                     
@@ -1631,9 +1872,9 @@ class BPL_OT_apply_blast_settings(Operator):
                 scene.display.shading.light = 'STUDIO'
                 scene.display.shading.color_type = 'MATERIAL'
                 if props.display_mode == 'WIREFRAME':
-                    scene.display.shading.type = 'WIREFRAME'
+                        scene.display.shading.type = 'WIREFRAME'
                 else:
-                    scene.display.shading.type = 'SOLID'
+                        scene.display.shading.type = 'SOLID'
                 
                 # Disable anti-aliasing for maximum speed in workbench
                 # Viewport anti-aliasing
@@ -1735,6 +1976,14 @@ class BPL_OT_apply_blast_settings(Operator):
             return {'FINISHED'}
             
         except Exception as e:
+            self.report({'ERROR'}, f"Error saving original settings: {str(e)}")
+            print(f"DETAILED ERROR in saving settings: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # Continue with applying settings even if saving fails
+            print(f"Continuing with applying blast settings despite saving error...")
+            
+        except Exception as e:
             self.report({'ERROR'}, f"Error applying settings: {str(e)}")
             return {'CANCELLED'}
 
@@ -1759,52 +2008,97 @@ class BPL_OT_restore_original_settings(Operator):
             import ast  # For evaluating the saved light states
             original = json.loads(props.original_settings)
             
-            # Restore comprehensive render settings
+            print(f"Restoring comprehensive settings for engine: {original.get('render_engine', 'unknown')}")
+            
+            def safe_restore(obj, attr, value):
+                """Safely restore attribute"""
+                try:
+                    if hasattr(obj, attr):
+                        setattr(obj, attr, value)
+                        return True
+                except Exception as e:
+                    print(f"Could not restore {attr}: {e}")
+                    return False
+            
+            # SCENE.RENDER - Restore all basic render settings
             scene.render.filepath = original['filepath']
             scene.render.resolution_x = original['resolution_x']
             scene.render.resolution_y = original['resolution_y']
             scene.render.resolution_percentage = original['resolution_percentage']
+            safe_restore(scene.render, 'pixel_aspect_x', original.get('pixel_aspect_x', 1.0))
+            safe_restore(scene.render, 'pixel_aspect_y', original.get('pixel_aspect_y', 1.0))
             scene.render.use_file_extension = original['use_file_extension']
             scene.render.use_overwrite = original['use_overwrite']
             scene.render.use_placeholder = original['use_placeholder']
             scene.frame_start = original['frame_start']
             scene.frame_end = original['frame_end']
             scene.frame_step = original['frame_step']
+            scene.frame_current = original.get('frame_current', 1)
             
-            # Restore image settings
-            scene.render.image_settings.file_format = original['image_settings']['file_format']
-            scene.render.image_settings.color_mode = original['image_settings']['color_mode']
-            scene.render.image_settings.color_depth = original['image_settings']['color_depth']
-            scene.render.image_settings.compression = original['image_settings']['compression']
-            scene.render.image_settings.quality = original['image_settings']['quality']
-            scene.render.image_settings.use_preview = original['image_settings']['use_preview']
-            
-            # Restore scene settings
-            scene.use_nodes = original['use_nodes']
-            
-            # Restore film/transparency settings
+            # Film settings
             scene.render.film_transparent = original['film_transparent']
             scene.render.filter_size = original['filter_size']
             
-            # Restore performance settings
+            # Performance settings
             scene.render.use_persistent_data = original['use_persistent_data']
             scene.render.use_simplify = original['use_simplify']
             scene.render.simplify_subdivision = original['simplify_subdivision']
             scene.render.simplify_child_particles = original['simplify_child_particles']
             scene.render.simplify_volumes = original['simplify_volumes']
+            safe_restore(scene.render, 'simplify_subdivision_render', original.get('simplify_subdivision_render', 6))
+            safe_restore(scene.render, 'simplify_child_particles_render', original.get('simplify_child_particles_render', 1.0))
+            safe_restore(scene.render, 'simplify_volumes_render', original.get('simplify_volumes_render', 1.0))
             
-            # Restore motion blur settings
+            # Motion blur
             scene.render.use_motion_blur = original['use_motion_blur']
             scene.render.motion_blur_shutter = original['motion_blur_shutter']
+            safe_restore(scene.render, 'motion_blur_shutter_curve', original.get('motion_blur_shutter_curve', 'AUTO'))
+            safe_restore(scene.render, 'rolling_shutter_type', original.get('rolling_shutter_type', 'NONE'))
+            safe_restore(scene.render, 'rolling_shutter_duration', original.get('rolling_shutter_duration', 0.1))
             
-            # Restore threading and tiles
+            # Threading
             scene.render.threads_mode = original['threads_mode']
             scene.render.threads = original['threads']
             
-            # Restore display settings
-            context.preferences.view.render_display_type = original['display_mode']
+            # Memory and caching
+            safe_restore(scene.render, 'tile_x', original.get('tile_x', 64))
+            safe_restore(scene.render, 'tile_y', original.get('tile_y', 64))
+            safe_restore(scene.render, 'use_save_buffers', original.get('use_save_buffers', False))
             
-            # Restore comprehensive metadata settings
+            # Preview and display
+            context.preferences.view.render_display_type = original['display_mode']
+            safe_restore(scene.render, 'preview_pixel_size', original.get('preview_pixel_size', 'AUTO'))
+            
+            # SCENE.RENDER.IMAGE_SETTINGS - Restore image settings
+            if 'image_settings' in original:
+                img_settings = original['image_settings']
+                scene.render.image_settings.file_format = img_settings['file_format']
+                scene.render.image_settings.color_mode = img_settings['color_mode']
+                scene.render.image_settings.color_depth = img_settings['color_depth']
+                scene.render.image_settings.compression = img_settings['compression']
+                scene.render.image_settings.quality = img_settings['quality']
+                scene.render.image_settings.use_preview = img_settings['use_preview']
+                safe_restore(scene.render.image_settings, 'exr_codec', img_settings.get('exr_codec', 'ZIP'))
+                safe_restore(scene.render.image_settings, 'use_zbuffer', img_settings.get('use_zbuffer', False))
+                safe_restore(scene.render.image_settings, 'jpeg2k_codec', img_settings.get('jpeg2k_codec', 'JP2'))
+                safe_restore(scene.render.image_settings, 'tiff_codec', img_settings.get('tiff_codec', 'DEFLATE'))
+            
+            # Scene/world settings
+            scene.use_nodes = original['use_nodes']
+            
+            # Compositing settings
+            scene.render.use_compositing = original['use_compositing']
+            scene.render.use_sequencer = original['use_sequencer']
+            
+            # Border and crop settings
+            scene.render.use_border = original['use_border']
+            scene.render.border_min_x = original['border_min_x']
+            scene.render.border_max_x = original['border_max_x']
+            scene.render.border_min_y = original['border_min_y']
+            scene.render.border_max_y = original['border_max_y']
+            scene.render.use_crop_to_border = original['use_crop_to_border']
+            
+            # Metadata settings - comprehensive
             scene.render.use_stamp = original['use_stamp']
             scene.render.use_stamp_date = original['use_stamp_date']
             scene.render.use_stamp_time = original['use_stamp_time']
@@ -1823,7 +2117,11 @@ class BPL_OT_restore_original_settings(Operator):
             scene.render.stamp_foreground = original['stamp_foreground']
             scene.render.stamp_background = original['stamp_background']
             
-            # Restore FFmpeg settings
+            # Hair settings
+            safe_restore(scene.render, 'hair_type', original.get('hair_type', 'PATH'))
+            safe_restore(scene.render, 'hair_subdiv', original.get('hair_subdiv', 3))
+            
+            # SCENE.RENDER.FFMPEG - Restore FFmpeg settings
             if 'ffmpeg' in original:
                 ffmpeg = original['ffmpeg']
                 scene.render.ffmpeg.format = ffmpeg['format']
@@ -1836,95 +2134,184 @@ class BPL_OT_restore_original_settings(Operator):
                 scene.render.ffmpeg.packetsize = ffmpeg['packetsize']
                 scene.render.ffmpeg.constant_rate_factor = ffmpeg['constant_rate_factor']
                 scene.render.ffmpeg.gopsize = ffmpeg['gopsize']
+                safe_restore(scene.render.ffmpeg, 'use_max_b_frames', ffmpeg.get('use_max_b_frames', False))
+                safe_restore(scene.render.ffmpeg, 'max_b_frames', ffmpeg.get('max_b_frames', 2))
+                safe_restore(scene.render.ffmpeg, 'use_autosplit', ffmpeg.get('use_autosplit', False))
+                safe_restore(scene.render.ffmpeg, 'autosplit_size', ffmpeg.get('autosplit_size', 2048))
                 scene.render.ffmpeg.audio_codec = ffmpeg['audio_codec']
                 scene.render.ffmpeg.audio_bitrate = ffmpeg['audio_bitrate']
                 scene.render.ffmpeg.audio_channels = ffmpeg['audio_channels']
                 scene.render.ffmpeg.audio_mixrate = ffmpeg['audio_mixrate']
                 scene.render.ffmpeg.audio_volume = ffmpeg['audio_volume']
             
-            # Restore compositing settings
-            scene.render.use_compositing = original['use_compositing']
-            scene.render.use_sequencer = original['use_sequencer']
-            
-            # Restore border and crop settings
-            scene.render.use_border = original['use_border']
-            scene.render.border_min_x = original['border_min_x']
-            scene.render.border_max_x = original['border_max_x']
-            scene.render.border_min_y = original['border_min_y']
-            scene.render.border_max_y = original['border_max_y']
-            scene.render.use_crop_to_border = original['use_crop_to_border']
-            
-            # Restore render engine
+            # Restore render engine first
             if 'render_engine' in original:
                 scene.render.engine = original['render_engine']
+                print(f"Restored render engine to: {original['render_engine']}")
                 
-                # Restore engine-specific settings
-                if original['render_engine'] == 'CYCLES' and 'cycles' in original:
+                # SCENE.CYCLES - Always restore Cycles settings if available  
+                print(f"Checking for Cycles settings in saved data...")
+                print(f"'cycles' in original: {'cycles' in original}")
+                if 'cycles' in original:
+                    print(f"original['cycles'] exists: {bool(original['cycles'])}")
+                    print(f"original['cycles'] keys: {list(original['cycles'].keys()) if original['cycles'] else 'empty'}")
+                else:
+                    print(f"ERROR: 'cycles' key not found in original settings! Keys available: {list(original.keys())}")
+                
+                if 'cycles' in original and original['cycles']:
                     cycles_settings = original['cycles']
                     cycles = scene.cycles
+                    print(f"Restoring ALL Cycles settings - samples: {cycles_settings.get('samples', 'unknown')}")
+                    
+                    # Restore ALL Cycles settings comprehensively
                     cycles.device = cycles_settings['device']
+                    safe_restore(cycles, 'feature_set', cycles_settings.get('feature_set', 'SUPPORTED'))
+                    safe_restore(cycles, 'shading_system', cycles_settings.get('shading_system', 'SVM'))
                     cycles.samples = cycles_settings['samples']
                     cycles.preview_samples = cycles_settings['preview_samples']
+                    safe_restore(cycles, 'aa_samples', cycles_settings.get('aa_samples', 4))
+                    safe_restore(cycles, 'preview_aa_samples', cycles_settings.get('preview_aa_samples', 4))
                     cycles.use_denoising = cycles_settings['use_denoising']
+                    safe_restore(cycles, 'denoiser', cycles_settings.get('denoiser', 'OPENIMAGEDENOISE'))
+                    safe_restore(cycles, 'denoising_input_passes', cycles_settings.get('denoising_input_passes', 'RGB_ALBEDO_NORMAL'))
+                    safe_restore(cycles, 'use_denoising_input_passes', cycles_settings.get('use_denoising_input_passes', True))
+                    safe_restore(cycles, 'denoising_prefilter', cycles_settings.get('denoising_prefilter', 'ACCURATE'))
                     cycles.use_adaptive_sampling = cycles_settings['use_adaptive_sampling']
                     cycles.adaptive_threshold = cycles_settings['adaptive_threshold']
                     cycles.adaptive_min_samples = cycles_settings['adaptive_min_samples']
+                    safe_restore(cycles, 'time_limit', cycles_settings.get('time_limit', 0.0))
+                    safe_restore(cycles, 'use_preview_adaptive_sampling', cycles_settings.get('use_preview_adaptive_sampling', False))
+                    safe_restore(cycles, 'preview_adaptive_threshold', cycles_settings.get('preview_adaptive_threshold', 0.1))
+                    safe_restore(cycles, 'preview_adaptive_min_samples', cycles_settings.get('preview_adaptive_min_samples', 0))
+                    safe_restore(cycles, 'seed', cycles_settings.get('seed', 0))
+                    safe_restore(cycles, 'use_animated_seed', cycles_settings.get('use_animated_seed', False))
+                    safe_restore(cycles, 'sample_clamp_direct', cycles_settings.get('sample_clamp_direct', 0.0))
+                    safe_restore(cycles, 'sample_clamp_indirect', cycles_settings.get('sample_clamp_indirect', 0.0))
+                    cycles.light_sampling_threshold = cycles_settings['light_sampling_threshold']
+                    safe_restore(cycles, 'sample_all_lights_direct', cycles_settings.get('sample_all_lights_direct', True))
+                    safe_restore(cycles, 'sample_all_lights_indirect', cycles_settings.get('sample_all_lights_indirect', True))
                     cycles.max_bounces = cycles_settings['max_bounces']
                     cycles.diffuse_bounces = cycles_settings['diffuse_bounces']
                     cycles.glossy_bounces = cycles_settings['glossy_bounces']
                     cycles.transmission_bounces = cycles_settings['transmission_bounces']
                     cycles.volume_bounces = cycles_settings['volume_bounces']
+                    safe_restore(cycles, 'transparent_max_bounces', cycles_settings.get('transparent_max_bounces', 8))
                     cycles.caustics_reflective = cycles_settings['caustics_reflective']
                     cycles.caustics_refractive = cycles_settings['caustics_refractive']
+                    safe_restore(cycles, 'filter_type', cycles_settings.get('filter_type', 'GAUSSIAN'))
+                    safe_restore(cycles, 'filter_width', cycles_settings.get('filter_width', 1.5))
                     cycles.pixel_filter_width = cycles_settings['pixel_filter_width']
-                    cycles.light_sampling_threshold = cycles_settings['light_sampling_threshold']
                     cycles.use_persistent_data = cycles_settings['use_persistent_data']
+                    safe_restore(cycles, 'debug_use_spatial_splits', cycles_settings.get('debug_use_spatial_splits', False))
+                    safe_restore(cycles, 'debug_use_hair_bvh', cycles_settings.get('debug_use_hair_bvh', True))
+                    safe_restore(cycles, 'debug_bvh_type', cycles_settings.get('debug_bvh_type', 'DYNAMIC_BVH'))
+                    safe_restore(cycles, 'debug_use_compact_bvh', cycles_settings.get('debug_use_compact_bvh', True))
+                    safe_restore(cycles, 'tile_size', cycles_settings.get('tile_size', 256))
+                    safe_restore(cycles, 'use_auto_tile', cycles_settings.get('use_auto_tile', False))
+                    safe_restore(cycles, 'progressive', cycles_settings.get('progressive', 'PATH'))
+                    safe_restore(cycles, 'use_square_samples', cycles_settings.get('use_square_samples', False))
+                    safe_restore(cycles, 'blur_glossy', cycles_settings.get('blur_glossy', 0.0))
+                    safe_restore(cycles, 'use_transparent_shadows', cycles_settings.get('use_transparent_shadows', True))
+                    safe_restore(cycles, 'volume_step_rate', cycles_settings.get('volume_step_rate', 1.0))
+                    safe_restore(cycles, 'volume_preview_step_rate', cycles_settings.get('volume_preview_step_rate', 1.0))
+                    safe_restore(cycles, 'volume_max_steps', cycles_settings.get('volume_max_steps', 1024))
                     
-                elif original['render_engine'] in ['BLENDER_EEVEE', 'BLENDER_EEVEE_NEXT'] and 'eevee' in original:
+                    print(f"ALL Cycles settings restoration completed")
+                    
+                # SCENE.EEVEE - Always restore EEVEE settings if available
+                if 'eevee' in original and original['eevee']:
                     eevee_settings = original['eevee']
                     eevee_attr = 'eevee' if hasattr(scene, 'eevee') else 'eevee_next'
                     eevee = getattr(scene, eevee_attr) if hasattr(scene, eevee_attr) else None
                     if eevee:
-                        if hasattr(eevee, 'taa_render_samples'):
-                            eevee.taa_render_samples = eevee_settings['taa_render_samples']
-                        if hasattr(eevee, 'taa_samples'):
-                            eevee.taa_samples = eevee_settings['taa_samples']
-                        if hasattr(eevee, 'use_bloom'):
-                            eevee.use_bloom = eevee_settings['use_bloom']
-                        if hasattr(eevee, 'use_ssr'):
-                            eevee.use_ssr = eevee_settings['use_ssr']
-                        if hasattr(eevee, 'use_motion_blur'):
-                            eevee.use_motion_blur = eevee_settings['use_motion_blur']
-                        if hasattr(eevee, 'use_volumetric_lights'):
-                            eevee.use_volumetric_lights = eevee_settings['use_volumetric_lights']
-                        if hasattr(eevee, 'gi_diffuse_bounces'):
-                            eevee.gi_diffuse_bounces = eevee_settings['gi_diffuse_bounces']
-                        if hasattr(eevee, 'use_persistent_data'):
-                            eevee.use_persistent_data = eevee_settings['use_persistent_data']
-                        if hasattr(eevee, 'shadow_cube_size'):
-                            eevee.shadow_cube_size = eevee_settings['shadow_cube_size']
-                        if hasattr(eevee, 'use_soft_shadows'):
-                            eevee.use_soft_shadows = eevee_settings['use_soft_shadows']
-                        if hasattr(eevee, 'use_shadows'):
-                            eevee.use_shadows = eevee_settings['use_shadows']
-                        if hasattr(eevee, 'use_gtao'):
-                            eevee.use_gtao = eevee_settings['use_gtao']
+                        print(f"Restoring ALL EEVEE settings - samples: {eevee_settings.get('taa_render_samples', 'unknown')}")
+                        
+                        # Restore ALL EEVEE settings comprehensively
+                        safe_restore(eevee, 'taa_render_samples', eevee_settings.get('taa_render_samples', 64))
+                        safe_restore(eevee, 'taa_samples', eevee_settings.get('taa_samples', 16))
+                        safe_restore(eevee, 'use_bloom', eevee_settings.get('use_bloom', False))
+                        safe_restore(eevee, 'bloom_threshold', eevee_settings.get('bloom_threshold', 0.8))
+                        safe_restore(eevee, 'bloom_knee', eevee_settings.get('bloom_knee', 0.5))
+                        safe_restore(eevee, 'bloom_radius', eevee_settings.get('bloom_radius', 6.5))
+                        safe_restore(eevee, 'bloom_intensity', eevee_settings.get('bloom_intensity', 0.05))
+                        safe_restore(eevee, 'use_ssr', eevee_settings.get('use_ssr', False))
+                        safe_restore(eevee, 'use_ssr_refraction', eevee_settings.get('use_ssr_refraction', False))
+                        safe_restore(eevee, 'ssr_max_roughness', eevee_settings.get('ssr_max_roughness', 0.5))
+                        safe_restore(eevee, 'ssr_thickness', eevee_settings.get('ssr_thickness', 0.2))
+                        safe_restore(eevee, 'ssr_border_fade', eevee_settings.get('ssr_border_fade', 0.075))
+                        safe_restore(eevee, 'ssr_firefly_fac', eevee_settings.get('ssr_firefly_fac', 10.0))
+                        safe_restore(eevee, 'use_motion_blur', eevee_settings.get('use_motion_blur', False))
+                        safe_restore(eevee, 'motion_blur_samples', eevee_settings.get('motion_blur_samples', 8))
+                        safe_restore(eevee, 'motion_blur_shutter', eevee_settings.get('motion_blur_shutter', 0.5))
+                        safe_restore(eevee, 'use_volumetric_lights', eevee_settings.get('use_volumetric_lights', False))
+                        safe_restore(eevee, 'volumetric_start', eevee_settings.get('volumetric_start', 0.1))
+                        safe_restore(eevee, 'volumetric_end', eevee_settings.get('volumetric_end', 100.0))
+                        safe_restore(eevee, 'volumetric_tile_size', eevee_settings.get('volumetric_tile_size', '8'))
+                        safe_restore(eevee, 'volumetric_samples', eevee_settings.get('volumetric_samples', 64))
+                        safe_restore(eevee, 'volumetric_sample_distribution', eevee_settings.get('volumetric_sample_distribution', 0.8))
+                        safe_restore(eevee, 'use_volumetric_shadows', eevee_settings.get('use_volumetric_shadows', False))
+                        safe_restore(eevee, 'volumetric_shadow_samples', eevee_settings.get('volumetric_shadow_samples', 16))
+                        safe_restore(eevee, 'gi_diffuse_bounces', eevee_settings.get('gi_diffuse_bounces', 3))
+                        safe_restore(eevee, 'gi_cubemap_resolution', eevee_settings.get('gi_cubemap_resolution', '512'))
+                        safe_restore(eevee, 'gi_visibility_resolution', eevee_settings.get('gi_visibility_resolution', '16'))
+                        safe_restore(eevee, 'gi_irradiance_smoothing', eevee_settings.get('gi_irradiance_smoothing', 0.1))
+                        safe_restore(eevee, 'gi_glossy_clamp', eevee_settings.get('gi_glossy_clamp', 0.0))
+                        safe_restore(eevee, 'gi_filter_quality', eevee_settings.get('gi_filter_quality', 1.0))
+                        safe_restore(eevee, 'use_persistent_data', eevee_settings.get('use_persistent_data', False))
+                        safe_restore(eevee, 'shadow_cube_size', eevee_settings.get('shadow_cube_size', '512'))
+                        safe_restore(eevee, 'shadow_cascade_size', eevee_settings.get('shadow_cascade_size', '1024'))
+                        safe_restore(eevee, 'use_shadow_high_bitdepth', eevee_settings.get('use_shadow_high_bitdepth', False))
+                        safe_restore(eevee, 'use_soft_shadows', eevee_settings.get('use_soft_shadows', True))
+                        safe_restore(eevee, 'use_shadows', eevee_settings.get('use_shadows', True))
+                        safe_restore(eevee, 'light_threshold', eevee_settings.get('light_threshold', 0.01))
+                        safe_restore(eevee, 'use_gtao', eevee_settings.get('use_gtao', False))
+                        safe_restore(eevee, 'gtao_distance', eevee_settings.get('gtao_distance', 0.2))
+                        safe_restore(eevee, 'gtao_factor', eevee_settings.get('gtao_factor', 1.0))
+                        safe_restore(eevee, 'gtao_quality', eevee_settings.get('gtao_quality', 0.25))
+                        safe_restore(eevee, 'use_overscan', eevee_settings.get('use_overscan', False))
+                        safe_restore(eevee, 'overscan_size', eevee_settings.get('overscan_size', 3.0))
+                        safe_restore(eevee, 'shadow_ray_count', eevee_settings.get('shadow_ray_count', 1))
+                        safe_restore(eevee, 'shadow_step_count', eevee_settings.get('shadow_step_count', 6))
+                        safe_restore(eevee, 'fast_gi_method', eevee_settings.get('fast_gi_method', 'GLOBAL_ILLUMINATION'))
+                        safe_restore(eevee, 'fast_gi_ray_count', eevee_settings.get('fast_gi_ray_count', 4))
+                        safe_restore(eevee, 'fast_gi_step_count', eevee_settings.get('fast_gi_step_count', 4))
+                        safe_restore(eevee, 'fast_gi_quality', eevee_settings.get('fast_gi_quality', 0.25))
+                        safe_restore(eevee, 'fast_gi_distance', eevee_settings.get('fast_gi_distance', 10.0))
+                        
+                        print(f"ALL EEVEE settings restoration completed")
                             
-                elif original['render_engine'] == 'BLENDER_WORKBENCH' and 'workbench' in original:
+                # SCENE.DISPLAY (WORKBENCH) - Always restore Workbench settings if available  
+                if 'workbench' in original and original['workbench']:
                     workbench_settings = original['workbench']
+                    print(f"Restoring ALL Workbench settings")
+                    
+                    # Restore ALL Workbench settings comprehensively
                     scene.display.shading.type = workbench_settings['shading_type']
                     scene.display.shading.light = workbench_settings['light']
                     scene.display.shading.color_type = workbench_settings['color_type']
-                    if hasattr(scene.display, 'render_aa'):
-                        scene.display.render_aa = workbench_settings['render_aa']
-                    if hasattr(scene.display.shading, 'show_cavity'):
-                        scene.display.shading.show_cavity = workbench_settings['show_cavity']
-                    if hasattr(scene.display.shading, 'show_object_outline'):
-                        scene.display.shading.show_object_outline = workbench_settings['show_object_outline']
-                    if hasattr(scene.display.shading, 'show_specular_highlight'):
-                        scene.display.shading.show_specular_highlight = workbench_settings['show_specular_highlight']
-                    if hasattr(scene.display.shading, 'use_dof'):
-                        scene.display.shading.use_dof = workbench_settings['use_dof']
+                    safe_restore(scene.display.shading, 'single_color', workbench_settings.get('single_color', (0.8, 0.8, 0.8)))
+                    safe_restore(scene.display.shading, 'background_type', workbench_settings.get('background_type', 'THEME'))
+                    safe_restore(scene.display.shading, 'background_color', workbench_settings.get('background_color', (0.05, 0.05, 0.05)))
+                    safe_restore(scene.display.shading, 'cavity_ridge_factor', workbench_settings.get('cavity_ridge_factor', 1.0))
+                    safe_restore(scene.display.shading, 'cavity_valley_factor', workbench_settings.get('cavity_valley_factor', 1.0))
+                    safe_restore(scene.display.shading, 'curvature_ridge_factor', workbench_settings.get('curvature_ridge_factor', 1.0))
+                    safe_restore(scene.display.shading, 'curvature_valley_factor', workbench_settings.get('curvature_valley_factor', 1.0))
+                    safe_restore(scene.display, 'render_aa', workbench_settings.get('render_aa', 'FXAA'))
+                    safe_restore(scene.display.shading, 'show_cavity', workbench_settings.get('show_cavity', False))
+                    safe_restore(scene.display.shading, 'show_object_outline', workbench_settings.get('show_object_outline', False))
+                    safe_restore(scene.display.shading, 'show_specular_highlight', workbench_settings.get('show_specular_highlight', True))
+                    safe_restore(scene.display.shading, 'use_dof', workbench_settings.get('use_dof', False))
+                    safe_restore(scene.display.shading, 'show_xray', workbench_settings.get('show_xray', False))
+                    safe_restore(scene.display.shading, 'xray_alpha', workbench_settings.get('xray_alpha', 0.5))
+                    safe_restore(scene.display.shading, 'show_shadows', workbench_settings.get('show_shadows', False))
+                    safe_restore(scene.display.shading, 'shadow_intensity', workbench_settings.get('shadow_intensity', 0.5))
+                    safe_restore(scene.display.shading, 'studio_light', workbench_settings.get('studio_light', 'DEFAULT'))
+                    safe_restore(scene.display.shading, 'studiolight_rotate_z', workbench_settings.get('studiolight_rotate_z', 0.0))
+                    safe_restore(scene.display.shading, 'studiolight_intensity', workbench_settings.get('studiolight_intensity', 1.0))
+                    safe_restore(scene.display.shading, 'studiolight_background_alpha', workbench_settings.get('studiolight_background_alpha', 0.0))
+                    safe_restore(scene.display.shading, 'studiolight_background_blur', workbench_settings.get('studiolight_background_blur', 0.0))
+                    
+                    print(f"ALL Workbench settings restoration completed")
                 
             # Restore world if it exists
             if 'world' in original and original['world']:

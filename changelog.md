@@ -14,6 +14,8 @@ v0.2.3
 v0.3.0
     - Flamenco job: Switched to JPG for fastest saving
 v0.3.3
-    - Apply blast settings no longer changes viewport mode or clamps the camera
+    - Apply blast settings:
+        - Set eevee render defaults to be even lower
+        - No longer changes viewport mode or moves the camera
+    - Restore original settings now fully restores ALL render settings. So you can save over without a second thought.
     - Default ffmpeg option set to Lossless
-    - Set eevee render defaults to be even lower
