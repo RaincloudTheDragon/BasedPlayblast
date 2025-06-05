@@ -1,56 +1,67 @@
 # BasedPlayblast
 
-A simple "fork" of [this plugin](https://blenderartists.org/t/free-playblast-addon/1450365) that simplifies its functions and tailors them in a more sophisticated manner.
+**Easily create playblasts from Blender**
 
-BasedPlayblast lets you quickly create playblasts from Blender without the headache of reconfiguring your render settings or using render presets. It's perfect for previewing animations, showing WIPs to clients, or just checking how your stuff looks in motion. It's like rendering your viewport. Actually, that's exactly what it is...
-
-## Main support for 4.4; 4.3 and earlier may still work, but don't expect perfect behavior, at least not yet.
+BasedPlayblast is a Blender addon that streamlines the process of creating video playblasts for animation review. It provides optimized render settings for fast preview generation while maintaining visual quality suitable for review purposes.
 
 ## Features
 
-- Streamlined settings - just name your output, or reuse your render output with the 'blast_' prefix.
-- Live progress tracking that actually works (new in v0.2.0!)
-- Viewport preview display options (wireframe, solid, material, rendered)
-- Metadata options for including frame numbers, camera info, and custom notes
-- Auto-plays your video (externally) when it's done
-- Saves your playblast settings between sessions
-- Automatic update checking and one-click updates from GitHub releases
+- **Fast Playblast Creation**: Optimized render settings for different preview modes (Solid, Material, Rendered)
+- **Multiple Display Modes**: Support for Wireframe, Solid, Material Preview, and Rendered modes
+- **Flexible Resolution**: Scene, preset, or custom resolution options
+- **Video Format Support**: MP4, MOV, AVI, MKV with various codecs (H.264, H.265, AV1, etc.)
+- **Metadata Integration**: Automatic inclusion of frame numbers, camera info, and custom notes
+- **Settings Management**: Apply and restore render settings without losing your project configuration
+- **Flamenco Support**: Custom Flamenco Job Script with a simple, non-destructive workflow
 
-## How to install
+## Installation
 
+### Via BlenderKit's Extension Repository (Recommended)
+1. Open Blender (4.3+)
+2. Install BlenderKit via https://www.blenderkit.com/get-blenderkit/
+3. Open Preferences (Ctrl + ,)
+4. Go to **Edit > Preferences > Get Extensions**
+5. Search for "BasedPlayblast"
+6. Click **Install**
+7. Enjoy automatic updating!
+
+### Manual Installation
 1. Download the latest release
-2. Click and drag .zip into blender, or go to Edit > Preferences > Add-ons > Install that way
-3. Enable the addon by checking the box
+2. In Blender, go to **Edit > Preferences > Add-ons**
+3. Click **Install from Disk** and select the downloaded file
+4. Enable the addon in the list
 
 ## Usage
 
-1. Find the BasedPlayblast panel in the Properties > Output tab
-2. Pick your output settings (resolution, format, custom ffmpeg args, etc.)
-3. Hit that big "Create Playblast" button
-4. Watch as your animation renders with a progress bar that actually works!
-5. The video will auto-play when it's done
+1. **Locate the Panel**: Go to **Properties > Output > BasedPlayblast**
+2. **Configure Settings**: Set your output path, resolution, and display mode
+3. **Create Playblast**: Click the **PLAYBLAST** button
+4. **View Result**: Click **VIEW** to open the generated video
 
-## Flamenco
-You can now farm a blast! This requires both the plugin, and Flamenco to work together.
+- **Apply Blast Settings**: Use this button to apply optimized render settings without rendering
+    - Intended particularly for Flamenco. Apply, check the resultant render settings to ensure they're correct, then send to Flamenco using the BasedPlayblast custom Job type.
+- **Restore Original Settings**: Return to your original render configuration
+- **Display Modes**:
+    - **Wireframe/Solid**
+        - Fast workbench viewport rendering. Recommended for short and/or locally-blasted projects.
+    - **Material**
+    - **Rendered**
 
-1. Place BasedPlayblast.js in /Flamenco/scripts - this script is just for outputting the blast, and is, thus, destructive. Do not use this for anything except playblasts.
-2. Set output settings within BasedPlayblast panel
-3. Click "Apply Blast Render Settings" - this takes the settings that the blaster normally handles locally, and puts it into the blendfile so it can be farmed. (Tip: you can set additional settings, such as workbench texture display, here.)
-4. Set flamenco settings (I recommend # of frames/# of workers)
-5. Click "Restore Original Render Settings" - you probably don't want to keep it on the blast settings permanently...
+## Requirements
 
-### Updating the addon
+- Blender 4.3.0 or higher
+- Python 3.x (included with Blender)
 
-The addon will automatically check for updates when Blender starts. You can also:
+## Support
 
-1. Go to Edit > Preferences > Add-ons
-2. Find BasedPlayblast in the list
-3. In the addon preferences, click "Check Now" to check for updates
-4. If an update is available, click "Install Update" to download and install it
+- **Documentation**: [GitHub Repository](https://github.com/RaincloudTheDragon/BasedPlayblast)
+- **Issues**: Report bugs or request features on GitHub
+- **License**: GPL-3.0-or-later
 
-## Planned features:
+## Changelog
 
-- Configurable settings so defaults can be set by end user (default prefix, etc)
-- sequencer audio/video strips support
-
-## Feel free to report bugs
+### Version 0.3.3
+- Added comprehensive render settings storage and restoration
+- Improved EEVEE raytracing optimization for maximum performance
+- Enhanced material preview mode with automatic studio lighting
+- Fixed various render engine compatibility issues

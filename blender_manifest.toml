@@ -1,0 +1,29 @@
+schema_version = "1.0.0"
+
+id = "basedplayblast"
+name = "BasedPlayblast"
+tagline = "Easily create playblasts from Blender and Flamenco"
+version = "1.0.0"
+type = "add-on"
+
+# Optional: Semantic Versioning
+maintainer = "RaincloudTheDragon <raincloudthedragon@gmail.com>"
+license = ["GPL-3.0-or-later"]
+blender_version_min = "4.3.0"
+
+website = "https://github.com/RaincloudTheDragon/BasedPlayblast"
+
+tags = ["Animation", "Render", "Workflow", "Video"]
+
+[permissions]
+files = "Import/export files and data"
+
+[build]
+paths_exclude_pattern = [
+    "__pycache__/",
+    "*.pyc",
+    ".git/",
+    ".github/",
+    "addon_updater*",
+    "basedplayblast_updater/"
+] 

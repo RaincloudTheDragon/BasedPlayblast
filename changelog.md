@@ -14,9 +14,10 @@
 # v0.3.1
     - fixed Flamenco integration for material/rendered preview blasts
 
-# v0.3.3
+# Release v1.0.0
     - Apply blast settings:
         - Set eevee render defaults to be even lower
         - No longer changes viewport mode or moves the camera
     - Restore original settings now fully restores ALL render settings. So you can save over without a second thought.
     - Default ffmpeg option set to Lossless
+    - Local Blasts now support Audio! It's off by default, but so long as you have audio in your scene, it will be in the render result.

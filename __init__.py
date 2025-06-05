@@ -1,14 +1,4 @@
-bl_info = {
-    "name": "BasedPlayblast",
-    "author": "RaincloudTheDragon",
-    "version": (0, 3, 3),
-    "blender": (4, 3, 0),
-    "location": "Properties > Output > BasedPlayblast",
-    "description": "Easily create playblasts from Blender",
-    "warning": "",
-    "doc_url": "https://github.com/RaincloudTheDragon/BasedPlayblast",
-    "category": "Animation",
-}
+# bl_info is no longer needed - information now in blender_manifest.toml
 
 import bpy # type: ignore
 import os
@@ -19,9 +9,6 @@ import glob  # Add missing import
 from bpy.props import (StringProperty, BoolProperty, IntProperty, EnumProperty, PointerProperty, FloatProperty) # type: ignore
 from bpy.types import (Panel, Operator, PropertyGroup, AddonPreferences) # type: ignore
 import time
-
-# Import the updater module
-from . import addon_updater_ops
 
 # Pre-defined items lists for EnumProperties
 RESOLUTION_MODE_ITEMS = [
@@ -155,7 +142,7 @@ class BPLProperties(PropertyGroup):
     )
     
     use_active_camera: BoolProperty(  # type: ignore
-        name="Use Scene Camera",
+        name="Use Active Camera",
         description="Use the scene's active camera",
         default=True
     )
@@ -2393,9 +2380,6 @@ class BPL_PT_main_panel(Panel):
     bl_order = 1  # This positions it right after the main Output panel (which has bl_order=0)
     
     def draw(self, context):
-        # Check for addon updates
-        addon_updater_ops.check_for_update_background()
-        
         layout = self.layout
         scene = context.scene
         props = scene.basedplayblast
@@ -2405,9 +2389,6 @@ class BPL_PT_main_panel(Panel):
         row.scale_y = 1.5
         row.operator("bpl.create_playblast", text="PLAYBLAST", icon='RENDER_ANIMATION')
         row.operator("bpl.view_playblast", text="VIEW", icon='PLAY')
-        
-        # Show update notice if available
-        addon_updater_ops.update_notice_box_ui(self, context)
         
         # Show progress if rendering
         if props.is_rendering:
@@ -2438,104 +2419,91 @@ class BPL_PT_main_panel(Panel):
         row.operator("bpl.apply_blast_settings", text="Apply Blast Render Settings", icon='GREASEPENCIL')
         row.operator("bpl.restore_original_settings", text="Restore Original Settings", icon='LOOP_BACK')
         
-        # Camera settings - collapsible
-        cam_box = layout.box()
-        row = cam_box.row()
-        row.prop(context.scene, "basedplayblast_show_camera", icon="TRIA_DOWN" if context.scene.get("basedplayblast_show_camera", False) else "TRIA_RIGHT", icon_only=True, emboss=False)
-        row.label(text="Camera")
+        # Properties - single collapsible section
+        props_box = layout.box()
+        row = props_box.row(align=True)
+        row.prop(context.scene, "basedplayblast_show_properties", icon="TRIA_DOWN" if context.scene.get("basedplayblast_show_properties", False) else "TRIA_RIGHT", icon_only=True, emboss=False)
+        row.label(text="Properties")
         
-        if context.scene.get("basedplayblast_show_camera", False):
-            cam_box.prop(props, "use_active_camera")
+        if context.scene.get("basedplayblast_show_properties", False):
+            # Display settings - FIRST
+            display_box = props_box.box()
+            display_box.label(text="Display Mode", icon='SHADING_RENDERED')
+            col = display_box.column(align=True)
+            col.prop(props, "display_mode", text="")
+            col.prop(props, "auto_disable_overlays")
+            col.prop(props, "enable_depth_of_field")
+            
+            # Camera settings
+            camera_box = props_box.box()
+            camera_box.label(text="Camera", icon='CAMERA_DATA')
+            col = camera_box.column(align=True)
+            col.prop(props, "use_active_camera")
             if not props.use_active_camera:
-                cam_box.prop(props, "camera_object")
-        
-        # Resolution settings - collapsible
-        res_box = layout.box()
-        row = res_box.row()
-        row.prop(context.scene, "basedplayblast_show_resolution", icon="TRIA_DOWN" if context.scene.get("basedplayblast_show_resolution", False) else "TRIA_RIGHT", icon_only=True, emboss=False)
-        row.label(text="Resolution")
-        
-        if context.scene.get("basedplayblast_show_resolution", False):
-            res_box.prop(props, "resolution_mode")
+                col.prop(props, "camera_object", text="")
+            
+            # Resolution settings
+            resolution_box = props_box.box()
+            resolution_box.label(text="Resolution", icon='TEXTURE')
+            col = resolution_box.column(align=True)
+            col.prop(props, "resolution_mode", text="")
             
             if props.resolution_mode == 'PRESET':
-                res_box.prop(props, "resolution_preset")
+                col.prop(props, "resolution_preset", text="")
             elif props.resolution_mode == 'CUSTOM':
-                row = res_box.row()
+                row = col.row(align=True)
                 row.prop(props, "resolution_x")
                 row.prop(props, "resolution_y")
             
-            res_box.prop(props, "resolution_percentage")
-        
-        # Frame range - collapsible
-        frame_box = layout.box()
-        row = frame_box.row()
-        row.prop(context.scene, "basedplayblast_show_frame_range", icon="TRIA_DOWN" if context.scene.get("basedplayblast_show_frame_range", False) else "TRIA_RIGHT", icon_only=True, emboss=False)
-        row.label(text="Frame Range")
-        
-        if context.scene.get("basedplayblast_show_frame_range", False):
-            frame_box.prop(props, "use_scene_frame_range")
+            col.prop(props, "resolution_percentage")
+            
+            # Frame range
+            frame_range_box = props_box.box()
+            frame_range_box.label(text="Frame Range", icon='TIME')
+            col = frame_range_box.column(align=True)
+            col.prop(props, "use_scene_frame_range")
             
             if not props.use_scene_frame_range:
-                row = frame_box.row()
+                row = col.row(align=True)
                 row.prop(props, "start_frame")
                 row.prop(props, "end_frame")
-        
-        # File format - collapsible
-        format_box = layout.box()
-        row = format_box.row()
-        row.prop(context.scene, "basedplayblast_show_format", icon="TRIA_DOWN" if context.scene.get("basedplayblast_show_format", False) else "TRIA_RIGHT", icon_only=True, emboss=False)
-        row.label(text="Format")
-        
-        if context.scene.get("basedplayblast_show_format", False):
-            format_box.prop(props, "video_format")
-            format_box.prop(props, "video_codec")
+            
+            # File format
+            format_box = props_box.box()
+            format_box.label(text="Format", icon='FILE_MOVIE')
+            col = format_box.column(align=True)
+            col.prop(props, "video_format", text="")
+            col.prop(props, "video_codec", text="")
             
             # Custom FFmpeg arguments
-            format_box.prop(props, "use_custom_ffmpeg_args")
+            col.prop(props, "use_custom_ffmpeg_args")
             if props.use_custom_ffmpeg_args:
-                format_box.prop(props, "custom_ffmpeg_args")
+                col.prop(props, "custom_ffmpeg_args", text="")
             else:
-                format_box.prop(props, "video_quality")
+                col.prop(props, "video_quality", text="")
             
-            format_box.prop(props, "include_audio")
+            col.prop(props, "include_audio")
             if props.include_audio:
-                format_box.prop(props, "audio_codec")
-                format_box.prop(props, "audio_bitrate")
-        
-        # Display settings - collapsible
-        display_box = layout.box()
-        row = display_box.row()
-        row.prop(context.scene, "basedplayblast_show_display", icon="TRIA_DOWN" if context.scene.get("basedplayblast_show_display", False) else "TRIA_RIGHT", icon_only=True, emboss=False)
-        row.label(text="Display")
-        
-        if context.scene.get("basedplayblast_show_display", False):
-            display_box.prop(props, "display_mode")
-            display_box.prop(props, "auto_disable_overlays")
-            display_box.prop(props, "enable_depth_of_field")
-        
-        # Metadata - collapsible
-        meta_box = layout.box()
-        row = meta_box.row()
-        row.prop(context.scene, "basedplayblast_show_metadata", icon="TRIA_DOWN" if context.scene.get("basedplayblast_show_metadata", False) else "TRIA_RIGHT", icon_only=True, emboss=False)
-        row.label(text="Metadata")
-        
-        if context.scene.get("basedplayblast_show_metadata", False):
-            meta_box.prop(props, "show_metadata", text="Show Metadata")
+                row = col.row(align=True)
+                row.prop(props, "audio_codec", text="")
+                row.prop(props, "audio_bitrate")
+            
+            # Metadata
+            metadata_box = props_box.box()
+            metadata_box.label(text="Metadata", icon='TEXT')
+            col = metadata_box.column(align=True)
+            col.prop(props, "show_metadata", text="Show Metadata")
             
             if props.show_metadata:
-                meta_box.prop(props, "metadata_note")
+                col.prop(props, "metadata_note", text="")
                 
-                col = meta_box.column(align=True)
                 row = col.row(align=True)
                 row.prop(props, "metadata_date", toggle=True)
                 row.prop(props, "metadata_frame", toggle=True)
-                
-                row = col.row(align=True)
                 row.prop(props, "metadata_scene", toggle=True)
-                row.prop(props, "metadata_camera", toggle=True)
                 
                 row = col.row(align=True)
+                row.prop(props, "metadata_camera", toggle=True)
                 row.prop(props, "metadata_lens", toggle=True)
                 row.prop(props, "metadata_resolution", toggle=True)
 
@@ -2543,48 +2511,12 @@ class BPL_PT_main_panel(Panel):
 class BPL_AddonPreferences(AddonPreferences):
     bl_idname = __name__
     
-    # Updater preferences
-    auto_check_update: BoolProperty(  # type: ignore
-        name="Auto-check for Updates",
-        description="Automatically check for updates when Blender starts",
-        default=True
-    )
-    
-    updater_interval_months: IntProperty(  # type: ignore
-        name='Months',
-        description="Number of months between checking for updates",
-        default=0,
-        min=0
-    )
-    
-    updater_interval_days: IntProperty(  # type: ignore
-        name='Days',
-        description="Number of days between checking for updates",
-        default=7,
-        min=0,
-    )
-    
-    updater_interval_hours: IntProperty(  # type: ignore
-        name='Hours',
-        description="Number of hours between checking for updates",
-        default=0,
-        min=0,
-        max=23
-    )
-    
-    updater_interval_minutes: IntProperty(  # type: ignore
-        name='Minutes',
-        description="Number of minutes between checking for updates",
-        default=0,
-        min=0,
-        max=59
-    )
+    # TODO: Add temp path customizability
+    # TODO: Add path to place the flamenco javascript?
     
     def draw(self, context):
         layout = self.layout
-        
-        # Updater settings
-        addon_updater_ops.update_settings_ui(self, context)
+        layout.label(text="BasedPlayblast")
 
 # Registration
 classes = (
@@ -2605,50 +2537,19 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.basedplayblast = PointerProperty(type=BPLProperties)
     
-    # Register properties for collapsible sections
-    bpy.types.Scene.basedplayblast_show_camera = BoolProperty(
-        name="Show Camera Settings",
+    # Register property for collapsible properties section
+    bpy.types.Scene.basedplayblast_show_properties = BoolProperty(
+        name="Show Properties",
         default=False
     )
-    bpy.types.Scene.basedplayblast_show_resolution = BoolProperty(
-        name="Show Resolution Settings",
-        default=False
-    )
-    bpy.types.Scene.basedplayblast_show_frame_range = BoolProperty(
-        name="Show Frame Range Settings",
-        default=False
-    )
-    bpy.types.Scene.basedplayblast_show_format = BoolProperty(
-        name="Show Format Settings",
-        default=False
-    )
-    bpy.types.Scene.basedplayblast_show_display = BoolProperty(
-        name="Show Display Settings",
-        default=False
-    )
-    bpy.types.Scene.basedplayblast_show_metadata = BoolProperty(
-        name="Show Metadata Settings",
-        default=False
-    )
-    
-    # Register addon updater code
-    addon_updater_ops.register(bl_info)
 
 def unregister():
-    # Unregister properties for collapsible sections
-    del bpy.types.Scene.basedplayblast_show_camera
-    del bpy.types.Scene.basedplayblast_show_resolution
-    del bpy.types.Scene.basedplayblast_show_frame_range
-    del bpy.types.Scene.basedplayblast_show_format
-    del bpy.types.Scene.basedplayblast_show_display
-    del bpy.types.Scene.basedplayblast_show_metadata
+    # Unregister property for collapsible properties section
+    del bpy.types.Scene.basedplayblast_show_properties
     
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     del bpy.types.Scene.basedplayblast
-    
-    # Unregister addon updater
-    addon_updater_ops.unregister()
 
 if __name__ == "__main__":
     register()
