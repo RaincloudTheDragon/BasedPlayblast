@@ -60,7 +60,7 @@ BasedPlayblast is a Blender addon that streamlines the process of creating video
 
 ## Changelog
 
-### Version 0.3.3
+### Version 1.0.0
 - Added comprehensive render settings storage and restoration
 - Improved EEVEE raytracing optimization for maximum performance
 - Enhanced material preview mode with automatic studio lighting
