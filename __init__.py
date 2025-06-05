@@ -1140,17 +1140,51 @@ class BPL_OT_apply_blast_settings(Operator):
                             if hasattr(eevee, 'use_volumetric_lights'):
                                 eevee.use_volumetric_lights = False
                             
-                            # Use moderate global illumination
-                            if hasattr(eevee, 'gi_diffuse_bounces'):
-                                eevee.gi_diffuse_bounces = 1  # Just one bounce for indirect lighting
-                                
-                            # Enable persistent data if available for faster animation rendering
-                            if hasattr(eevee, 'use_persistent_data'):
-                                eevee.use_persistent_data = True
-                                print(f"Enabled persistent data for faster EEVEE animation rendering")
-                                
-                            print(f"Applied optimized EEVEE settings for RENDERED mode")
+                                                    # Use moderate global illumination
+                        if hasattr(eevee, 'gi_diffuse_bounces'):
+                            eevee.gi_diffuse_bounces = 1  # Just one bounce for indirect lighting
+                        
+                        # Set minimal ray and step settings for maximum performance
+                        if hasattr(eevee, 'gi_irradiance_smoothing'):
+                            eevee.gi_irradiance_smoothing = 0.1  # Minimal smoothing
+                        if hasattr(eevee, 'gi_glossy_clamp'):
+                            eevee.gi_glossy_clamp = 0.0  # No clamping
+                        
+                        # Set raytracing settings to minimum (1 ray, 2 steps)
+                        if hasattr(eevee, 'ssr_max_roughness'):
+                            eevee.ssr_max_roughness = 0.5  # Limit SSR roughness
+                        if hasattr(eevee, 'ssr_thickness'):
+                            eevee.ssr_thickness = 0.2  # Thin SSR thickness
+                        if hasattr(eevee, 'ssr_border_fade'):
+                            eevee.ssr_border_fade = 0.075  # Minimal border fade
+                        if hasattr(eevee, 'ssr_firefly_fac'):
+                            eevee.ssr_firefly_fac = 10.0  # Standard firefly suppression
                             
+                        # Set shadow raytracing to minimal (1 ray, 2 steps)
+                        if hasattr(eevee, 'shadow_ray_count'):
+                            eevee.shadow_ray_count = 1  # 1 ray for shadows
+                        if hasattr(eevee, 'shadow_step_count'):
+                            eevee.shadow_step_count = 2  # 2 steps for shadows
+                            
+                        # Set fast GI to minimal settings (1 ray, 2 steps)
+                        if hasattr(eevee, 'fast_gi_method'):
+                            eevee.fast_gi_method = 'GLOBAL_ILLUMINATION'  # Use valid method
+                        if hasattr(eevee, 'fast_gi_ray_count'):
+                            eevee.fast_gi_ray_count = 1  # 1 ray for fast GI
+                        if hasattr(eevee, 'fast_gi_step_count'):
+                            eevee.fast_gi_step_count = 2  # 2 steps for fast GI
+                        if hasattr(eevee, 'fast_gi_quality'):
+                            eevee.fast_gi_quality = 0.25  # Low quality for speed
+                        if hasattr(eevee, 'fast_gi_distance'):
+                            eevee.fast_gi_distance = 1.0  # Short distance
+                            
+                        # Enable persistent data if available for faster animation rendering
+                        if hasattr(eevee, 'use_persistent_data'):
+                            eevee.use_persistent_data = True
+                            print(f"Enabled persistent data for faster EEVEE animation rendering")
+                            
+                        print(f"Set EEVEE raytracing to 1 ray, 2 steps for maximum performance")
+                        print(f"Applied optimized EEVEE settings for RENDERED mode")
                     elif current_engine == 'CYCLES':
                         # Apply Cycles-specific optimizations
                         cycles = scene.cycles
@@ -1258,7 +1292,7 @@ class BPL_OT_apply_blast_settings(Operator):
                 
                 # Material preview uses an HDRI environment for lighting
                 try:
-                    # Completely remove scene world - critical for studio lighting
+                    # Completely remove scene world - critical for studio lights
                     scene.world = None
                     
                     # CRITICAL FIX: Store and temporarily disable all scene lights

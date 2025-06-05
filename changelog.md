@@ -16,3 +16,4 @@ v0.3.0
 v0.3.3
     - Apply blast settings no longer changes viewport mode or clamps the camera
     - Default ffmpeg option set to Lossless
+    - Set eevee render defaults to be even lower
