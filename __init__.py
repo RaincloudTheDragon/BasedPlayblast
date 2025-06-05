@@ -73,7 +73,6 @@ VIDEO_QUALITY_ITEMS = [
     ('HIGH', "High", "High quality"),
     ('PERC_LOSSLESS', "Perceptually Lossless", "Perceptually lossless quality"),
     ('LOSSLESS', "Lossless", "Lossless quality"),
-    ('CRF_0', "CRF 0 (True Lossless)", "Constant Rate Factor 0 - true lossless compression (recommended)")
 ]
 
 AUDIO_CODEC_ITEMS = [
@@ -113,7 +112,6 @@ def get_ffmpeg_quality(quality_enum):
         'HIGH': 'LOW',           # High quality = Low CRF value
         'PERC_LOSSLESS': 'PERC_LOSSLESS',
         'LOSSLESS': 'LOSSLESS',
-        'CRF_0': 'LOSSLESS'      # Map our CRF_0 to Blender's LOSSLESS option
     }
     return quality_map.get(quality_enum, 'MEDIUM')
 
@@ -242,7 +240,7 @@ class BPLProperties(PropertyGroup):
         name="Quality",
         description="Quality of the video",
         items=VIDEO_QUALITY_ITEMS,
-        default='CRF_0'
+        default='LOSSLESS'
     )
     
     include_audio: BoolProperty(  # type: ignore

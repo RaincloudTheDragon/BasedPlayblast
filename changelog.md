@@ -13,3 +13,6 @@ v0.2.3
     - Fixed manual scene range
 v0.3.0
     - Flamenco job: Switched to JPG for fastest saving
+v0.3.3
+    - Apply blast settings no longer changes viewport mode or clamps the camera
+    - Default ffmpeg option set to Lossless
