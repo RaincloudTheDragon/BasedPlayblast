@@ -20,4 +20,6 @@
         - No longer changes viewport mode or moves the camera
     - Restore original settings now fully restores ALL render settings. So you can save over without a second thought.
     - Default ffmpeg option set to Lossless
-    - Local Blasts now support Audio! It's off by default, but so long as you have audio in your scene, it will be in the render result.
+    - Local Blast:
+        - Now supports audio! It's off by default, but so long as you have audio in your scene, it will be in the render result.
+        - Fixed Rendered Cycles blasts yielding a black screen.

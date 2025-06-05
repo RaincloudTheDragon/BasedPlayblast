@@ -383,6 +383,10 @@ class BPL_OT_create_playblast(Operator):
     _frame_start = 0
     _frame_end = 0
     _current_frame = 0
+    _original_render_engine = None
+    _original_cycles_viewport = None
+    _use_actual_render = False
+    _original_cycles_render = None
     
     def modal(self, context, event):
         if event.type == 'ESC':
@@ -400,12 +404,47 @@ class BPL_OT_create_playblast(Operator):
                 props.is_rendering = True
                 self._phase = 'RENDER'
                 
-                # Start the render
-                override = context.copy()
-                override["area"] = self._area
-                override["region"] = [r for r in self._area.regions if r.type == 'WINDOW'][0]
-                with context.temp_override(**override):
-                    bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True, sequencer=False, write_still=False, view_context=True)
+                # CRITICAL: Final viewport validation and refresh before render
+                if self._space and self._region_3d:
+                    # Ensure camera view is active
+                    if self._region_3d.view_perspective != 'CAMERA':
+                        self._region_3d.view_perspective = 'CAMERA'
+                        print("Force-set camera view before render")
+                    
+                    # Final viewport refresh
+                    self._area.tag_redraw()
+                    context.view_layer.update()
+                    
+                    # Add a brief delay to ensure viewport is ready
+                    import time
+                    time.sleep(0.1)
+                
+                                # Start the render - choose between actual render or OpenGL based on engine
+                if getattr(self, '_use_actual_render', False):
+                    # Use actual Cycles rendering for RENDERED mode
+                    print(f"Starting Cycles animation render with:")
+                    print(f"  - Engine: {context.scene.render.engine}")
+                    print(f"  - Samples: {getattr(context.scene.cycles, 'samples', 'unknown')}")
+                    print(f"  - Scene camera: {context.scene.camera.name if context.scene.camera else 'None'}")
+                    print(f"  - Output format: {context.scene.render.image_settings.file_format}")
+                    print(f"  - Output path: {context.scene.render.filepath}")
+                    
+                    # Use simpler render call without context override to avoid errors
+                    bpy.ops.render.render('INVOKE_DEFAULT', animation=True)
+                else:
+                    # Use OpenGL viewport rendering for other engines
+                    override = context.copy()
+                    override["area"] = self._area
+                    override["region"] = [r for r in self._area.regions if r.type == 'WINDOW'][0]
+                        
+                    print(f"Starting OpenGL render with:")
+                    print(f"  - Area: {self._area.type}")
+                    print(f"  - Shading: {self._space.shading.type}")
+                    print(f"  - View perspective: {self._region_3d.view_perspective}")
+                    print(f"  - Scene camera: {context.scene.camera.name if context.scene.camera else 'None'}")
+                    
+                    with context.temp_override(**override):
+                        bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True, sequencer=False, write_still=False, view_context=True)
                 
                 # Force redraw of UI
                 for area in context.screen.areas:
@@ -443,16 +482,31 @@ class BPL_OT_create_playblast(Operator):
                     if area.type == 'VIEW_3D':
                         area.tag_redraw()
                 
-                # Check if output file exists and has expected size to determine completion
-                file_ext = get_file_extension(context.scene.basedplayblast.video_format)
-                output_path = bpy.path.abspath(context.scene.render.filepath)
-                full_path = output_path + file_ext
+                # Check if rendering is complete based on frame count or file existence
+                if getattr(self, '_use_actual_render', False):
+                    # For Cycles frame-based rendering, check if all frames are rendered
+                    output_dir = bpy.path.abspath(context.scene.basedplayblast.output_path)
+                    frame_output_dir = os.path.join(output_dir, "frames")
+                    expected_frames = self._frame_end - self._frame_start + 1
+                    
+                    if os.path.exists(frame_output_dir):
+                        frame_files = glob.glob(os.path.join(frame_output_dir, "*.png"))
+                        frames_rendered = len(frame_files)
+                        render_complete = frames_rendered >= expected_frames
+                    else:
+                        render_complete = False
+                else:
+                    # For OpenGL rendering, check if output file exists
+                    file_ext = get_file_extension(context.scene.basedplayblast.video_format)
+                    output_path = bpy.path.abspath(context.scene.render.filepath)
+                    full_path = output_path + file_ext
+                    render_complete = os.path.exists(full_path)
                 
                 # When playhead loops back to first frame after rendering all frames
-                # or if the output file exists and seems complete, consider rendering done
-                if (current_frame == self._frame_start and self._last_reported_frame >= self._frame_end) or os.path.exists(full_path):
-                    # If we've seen the last frame or the file exists, consider it done
-                    print(f"Detected playblast completion - Output file exists: {os.path.exists(full_path)}")
+                # or if the rendering is complete, consider it done
+                if (current_frame == self._frame_start and self._last_reported_frame >= self._frame_end) or render_complete:
+                    # If we've seen the last frame or the rendering is complete, consider it done
+                    print(f"Detected playblast completion - Render complete: {render_complete}")
                     
                     self._phase = 'COMPLETE'
                     props.render_progress = 100.0
@@ -588,13 +642,7 @@ class BPL_OT_create_playblast(Operator):
             output_dir = bpy.path.abspath(props.output_path)
             os.makedirs(output_dir, exist_ok=True)
             
-            # Set output path
-            file_name = props.file_name
-            if '.' in file_name:
-                file_name = os.path.splitext(file_name)[0]
-            scene.render.filepath = os.path.join(output_dir, file_name)
-            
-            # Set file format
+            # Set file format first
             scene.render.image_settings.file_format = 'FFMPEG'
             scene.render.ffmpeg.format = props.video_format
             scene.render.ffmpeg.codec = props.video_codec
@@ -607,11 +655,45 @@ class BPL_OT_create_playblast(Operator):
             else:
                 scene.render.ffmpeg.audio_codec = 'NONE'
             
+            # Set output path - critical for FFMPEG video output
+            file_name = props.file_name
+            if '.' in file_name:
+                file_name = os.path.splitext(file_name)[0]
+            
+            # For FFMPEG video, set path with proper video extension and NO frame numbers
+            video_ext = get_file_extension(props.video_format)
+            scene.render.filepath = os.path.join(output_dir, file_name + video_ext)
+            
+            # CRITICAL: Disable frame number suffixes for FFMPEG video output
+            scene.render.use_file_extension = True
+            scene.render.use_overwrite = True
+            scene.render.use_placeholder = False
+            
+            # Confirm FFMPEG format for debugging
+            print(f"File format set to: {scene.render.image_settings.file_format}")
+            print(f"FFMPEG format: {scene.render.ffmpeg.format}, codec: {scene.render.ffmpeg.codec}")
+            print(f"Video output path: {scene.render.filepath}")
+            print(f"File extension enabled: {scene.render.use_file_extension}")
+            print(f"Overwrite enabled: {scene.render.use_overwrite}")
+            print(f"Placeholder disabled: {scene.render.use_placeholder}")
+            
             # Set camera if specified
             if not props.use_active_camera and props.camera_object != "NONE":
                 camera_obj = context.scene.objects.get(props.camera_object)
                 if camera_obj and camera_obj.type == 'CAMERA':
                     scene.camera = camera_obj
+                    print(f"Using selected camera: {camera_obj.name}")
+                else:
+                    self.report({'ERROR'}, f"Selected camera '{props.camera_object}' not found or not a camera")
+                    self.cleanup(context)
+                    return {'CANCELLED'}
+            else:
+                # Validate scene camera exists
+                if not scene.camera:
+                    self.report({'ERROR'}, "No active camera in scene. Please add a camera or select one in the properties.")
+                    self.cleanup(context)
+                    return {'CANCELLED'}
+                print(f"Using scene camera: {scene.camera.name}")
             
             # Set frame range if using manual range
             if not props.use_scene_frame_range:
@@ -647,19 +729,112 @@ class BPL_OT_create_playblast(Operator):
             
             # Set viewport display mode
             if self._space:
+                # CRITICAL: Ensure we have a valid camera first
+                if not scene.camera:
+                    self.report({'ERROR'}, "No active camera found. Please set an active camera for the scene.")
+                    self.cleanup(context)
+                    return {'CANCELLED'}
+                
                 # Set shading type according to display_mode
                 if self._space.shading.type != props.display_mode:
                     self._space.shading.type = props.display_mode
+                    print(f"Set viewport shading to: {props.display_mode}")
                     
                 # Set overlay visibility
                 if props.auto_disable_overlays:
                     self._space.overlay.show_overlays = False
                 
                 # Switch to camera view if needed
-                if self._region_3d and self._region_3d.view_perspective != 'CAMERA':
+                if self._region_3d:
                     self._region_3d.view_perspective = 'CAMERA'
                     if hasattr(self._region_3d, 'use_local_camera'):
                         self._region_3d.use_local_camera = False
+                    print(f"Set viewport to camera view")
+                
+                # CRITICAL: Force viewport refresh and update
+                self._area.tag_redraw()
+                context.view_layer.update()
+                
+                # Additional viewport settings based on display mode
+                if props.display_mode == 'SOLID':
+                    # Ensure proper solid shading settings
+                    self._space.shading.color_type = 'MATERIAL'
+                    self._space.shading.light = 'STUDIO'
+                elif props.display_mode == 'MATERIAL':
+                    # Ensure material preview settings
+                    self._space.shading.color_type = 'MATERIAL'
+                    self._space.shading.light = 'STUDIO'
+                elif props.display_mode == 'RENDERED':
+                    # CRITICAL: For Cycles, use actual rendering instead of viewport rendering
+                    current_engine = scene.render.engine
+                    if current_engine == 'CYCLES':
+                        print(f"WARNING: Cycles RENDERED mode detected - switching to actual render mode for stability")
+                        
+                        # Mark that we're using actual rendering instead of viewport rendering
+                        self._use_actual_render = True
+                        self._original_render_engine = None  # Don't change engine
+                        self._original_cycles_viewport = None
+                        
+                        # CRITICAL: For Cycles, render individual frames and convert to video afterwards
+                        # This avoids FFMPEG issues with Cycles animation rendering
+                        scene.render.image_settings.file_format = 'PNG'
+                        scene.render.image_settings.color_mode = 'RGBA'
+                        scene.render.image_settings.compression = 15  # Minimal compression for speed
+                        
+                        # Set frame-based output path for individual frames
+                        frame_output_dir = os.path.join(output_dir, "frames")
+                        os.makedirs(frame_output_dir, exist_ok=True)
+                        scene.render.filepath = os.path.join(frame_output_dir, file_name + "_")
+                        
+                        print(f"WARNING: Using frame-based rendering for Cycles stability")
+                        print(f"Frame output: {scene.render.filepath}")
+                        print(f"Will convert to video after rendering completes")
+                        
+                        # Apply ultra-fast Cycles settings for playblast
+                        cycles = scene.cycles
+                        
+                        # Store original render settings to restore later
+                        if not hasattr(self, '_original_cycles_render'):
+                            self._original_cycles_render = {
+                                'samples': getattr(cycles, 'samples', 128),
+                                'use_denoising': getattr(cycles, 'use_denoising', True),
+                                'max_bounces': getattr(cycles, 'max_bounces', 12),
+                                'diffuse_bounces': getattr(cycles, 'diffuse_bounces', 4),
+                                'glossy_bounces': getattr(cycles, 'glossy_bounces', 4),
+                                'transmission_bounces': getattr(cycles, 'transmission_bounces', 12),
+                                'volume_bounces': getattr(cycles, 'volume_bounces', 0),
+                                'use_adaptive_sampling': getattr(cycles, 'use_adaptive_sampling', True),
+                                'adaptive_threshold': getattr(cycles, 'adaptive_threshold', 0.01),
+                            }
+                        
+                        # Apply ultra-fast settings for playblast
+                        if hasattr(cycles, 'samples'):
+                            cycles.samples = 8  # Very low for speed
+                        if hasattr(cycles, 'use_denoising'):
+                            cycles.use_denoising = False  # Disable for speed
+                        if hasattr(cycles, 'max_bounces'):
+                            cycles.max_bounces = 2  # Minimal bounces
+                        if hasattr(cycles, 'diffuse_bounces'):
+                            cycles.diffuse_bounces = 1
+                        if hasattr(cycles, 'glossy_bounces'):
+                            cycles.glossy_bounces = 1
+                        if hasattr(cycles, 'transmission_bounces'):
+                            cycles.transmission_bounces = 1
+                        if hasattr(cycles, 'volume_bounces'):
+                            cycles.volume_bounces = 0
+                        if hasattr(cycles, 'use_adaptive_sampling'):
+                            cycles.use_adaptive_sampling = True
+                        if hasattr(cycles, 'adaptive_threshold'):
+                            cycles.adaptive_threshold = 0.5  # High threshold for fast convergence
+                        
+                        print(f"Applied ultra-fast Cycles settings: {cycles.samples} samples, no denoising, {cycles.max_bounces} max bounces")
+                    else:
+                        # For non-Cycles engines, use viewport rendering as normal
+                        self._use_actual_render = False
+                        self._original_render_engine = None
+                        self._original_cycles_viewport = None
+                
+                print(f"Viewport setup complete for {props.display_mode} mode")
             
             # Create override context
             override = context.copy()
@@ -684,6 +859,10 @@ class BPL_OT_create_playblast(Operator):
         scene = context.scene
         props = scene.basedplayblast
         
+        # Check if we need to convert frames to video for Cycles
+        if getattr(self, '_use_actual_render', False):
+            self.convert_frames_to_video(context)
+        
         # Find and open the output file
         file_ext = get_file_extension(props.video_format)
         output_dir = bpy.path.abspath(props.output_path)
@@ -703,6 +882,72 @@ class BPL_OT_create_playblast(Operator):
                 self.report({'ERROR'}, f"Failed to open playblast: {str(e)}")    
 
         self.cleanup(context)
+    
+    def convert_frames_to_video(self, context):
+        """Convert individual PNG frames to video using FFmpeg"""
+        scene = context.scene
+        props = scene.basedplayblast
+        
+        try:
+            output_dir = bpy.path.abspath(props.output_path)
+            frame_output_dir = os.path.join(output_dir, "frames")
+            
+            # Get file name without extension
+            file_name = props.file_name
+            if '.' in file_name:
+                file_name = os.path.splitext(file_name)[0]
+            
+            # Define video output path
+            video_ext = get_file_extension(props.video_format)
+            video_output = os.path.join(output_dir, file_name + video_ext)
+            
+            # Frame pattern for FFmpeg
+            frame_pattern = os.path.join(frame_output_dir, file_name + "_%04d.png")
+            
+            # Build FFmpeg command
+            framerate = scene.render.fps / scene.render.fps_base
+            
+            ffmpeg_cmd = [
+                "ffmpeg", "-y",  # Overwrite output file
+                "-framerate", str(framerate),
+                "-i", frame_pattern,
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-crf", "18",  # High quality
+                video_output
+            ]
+            
+            print(f"Converting frames to video...")
+            print(f"Command: {' '.join(ffmpeg_cmd)}")
+            
+            # Run FFmpeg
+            result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                print(f"Video conversion successful: {video_output}")
+                
+                # Clean up frame files
+                import glob
+                frame_files = glob.glob(os.path.join(frame_output_dir, "*.png"))
+                for frame_file in frame_files:
+                    try:
+                        os.remove(frame_file)
+                    except:
+                        pass
+                
+                # Remove frame directory if empty
+                try:
+                    os.rmdir(frame_output_dir)
+                except:
+                    pass
+                    
+            else:
+                print(f"FFmpeg error: {result.stderr}")
+                self.report({'ERROR'}, f"Video conversion failed: {result.stderr}")
+                
+        except Exception as e:
+            print(f"Error converting frames to video: {str(e)}")
+            self.report({'ERROR'}, f"Video conversion error: {str(e)}")
     
     def cleanup(self, context):
         # Reset progress properties
@@ -759,6 +1004,30 @@ class BPL_OT_create_playblast(Operator):
             scene.render.use_stamp_scene = self._original_settings['use_stamp_scene']
             scene.render.use_stamp_note = self._original_settings['use_stamp_note']
             scene.render.stamp_note_text = self._original_settings['stamp_note_text']
+        
+        # Restore original render engine if it was changed
+        if self._original_render_engine is not None:
+            context.scene.render.engine = self._original_render_engine
+            print(f"Restored original render engine: {self._original_render_engine}")
+        
+        # Restore original Cycles viewport settings if they were changed
+        if self._original_cycles_viewport is not None:
+            cycles = context.scene.cycles
+            for attr, value in self._original_cycles_viewport.items():
+                if hasattr(cycles, attr):
+                    setattr(cycles, attr, value)
+            print(f"Restored original Cycles viewport settings")
+        
+        # Restore original Cycles render settings if they were changed
+        if self._original_cycles_render is not None:
+            cycles = context.scene.cycles
+            scene = context.scene
+            for attr, value in self._original_cycles_render.items():
+                if attr == 'file_format':
+                    scene.render.image_settings.file_format = value
+                elif hasattr(cycles, attr):
+                    setattr(cycles, attr, value)
+            print(f"Restored original Cycles render settings")
         
         # Force a redraw to ensure viewport updates
         for area in context.screen.areas:
@@ -978,7 +1247,7 @@ class BPL_OT_apply_blast_settings(Operator):
                 except:
                     return str(obj)
         
-        original_settings = {
+            original_settings = {
                 # SCENE.RENDER - Complete render settings
                 'render_engine': scene.render.engine,
                 'filepath': scene.render.filepath,
@@ -2426,7 +2695,7 @@ class BPL_PT_main_panel(Panel):
         row.label(text="Properties")
         
         if context.scene.get("basedplayblast_show_properties", False):
-            # Display settings - FIRST
+            # 1. Display Mode
             display_box = props_box.box()
             display_box.label(text="Display Mode", icon='SHADING_RENDERED')
             col = display_box.column(align=True)
@@ -2434,15 +2703,18 @@ class BPL_PT_main_panel(Panel):
             col.prop(props, "auto_disable_overlays")
             col.prop(props, "enable_depth_of_field")
             
-            # Camera settings
-            camera_box = props_box.box()
-            camera_box.label(text="Camera", icon='CAMERA_DATA')
-            col = camera_box.column(align=True)
-            col.prop(props, "use_active_camera")
-            if not props.use_active_camera:
-                col.prop(props, "camera_object", text="")
+            # 2. Frame Range
+            frame_range_box = props_box.box()
+            frame_range_box.label(text="Frame Range", icon='TIME')
+            col = frame_range_box.column(align=True)
+            col.prop(props, "use_scene_frame_range")
             
-            # Resolution settings
+            if not props.use_scene_frame_range:
+                row = col.row(align=True)
+                row.prop(props, "start_frame")
+                row.prop(props, "end_frame")
+            
+            # 3. Resolution
             resolution_box = props_box.box()
             resolution_box.label(text="Resolution", icon='TEXTURE')
             col = resolution_box.column(align=True)
@@ -2457,18 +2729,7 @@ class BPL_PT_main_panel(Panel):
             
             col.prop(props, "resolution_percentage")
             
-            # Frame range
-            frame_range_box = props_box.box()
-            frame_range_box.label(text="Frame Range", icon='TIME')
-            col = frame_range_box.column(align=True)
-            col.prop(props, "use_scene_frame_range")
-            
-            if not props.use_scene_frame_range:
-                row = col.row(align=True)
-                row.prop(props, "start_frame")
-                row.prop(props, "end_frame")
-            
-            # File format
+            # 4. Format
             format_box = props_box.box()
             format_box.label(text="Format", icon='FILE_MOVIE')
             col = format_box.column(align=True)
@@ -2488,7 +2749,7 @@ class BPL_PT_main_panel(Panel):
                 row.prop(props, "audio_codec", text="")
                 row.prop(props, "audio_bitrate")
             
-            # Metadata
+            # 5. Metadata
             metadata_box = props_box.box()
             metadata_box.label(text="Metadata", icon='TEXT')
             col = metadata_box.column(align=True)
