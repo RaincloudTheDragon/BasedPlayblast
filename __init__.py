@@ -57,7 +57,11 @@ VIDEO_FORMAT_ITEMS = [
 ]
 
 VIDEO_CODEC_ITEMS = [
-    ('H264', "H.264", "Standard codec with good quality and compression (recommended)"),
+    ('H264', "H.264", "Standard H.264 codec with good quality and compression (recommended)"),
+    ('H265', "H.265", "H.265 codec with better compression than H.264"),
+    ('AV1', "AV1", "Modern AV1 codec with excellent compression"),
+    ('MPEG4', "MPEG-4", "MPEG-4 codec for broad compatibility"),
+    ('FFV1', "FFV1", "Lossless codec for archival purposes"),
     ('NONE', "None", "No video codec")
 ]
 
@@ -68,7 +72,8 @@ VIDEO_QUALITY_ITEMS = [
     ('MEDIUM', "Medium", "Medium quality"),
     ('HIGH', "High", "High quality"),
     ('PERC_LOSSLESS', "Perceptually Lossless", "Perceptually lossless quality"),
-    ('LOSSLESS', "Lossless", "Lossless quality")
+    ('LOSSLESS', "Lossless", "Lossless quality"),
+    ('CRF_0', "CRF 0 (True Lossless)", "Constant Rate Factor 0 - true lossless compression (recommended)")
 ]
 
 AUDIO_CODEC_ITEMS = [
@@ -97,6 +102,20 @@ def get_file_extension(video_format):
         return ".mkv"
     else:
         return ".mp4"  # Default to mp4 if unknown
+
+# Helper function to convert quality enum to FFmpeg CRF value
+def get_ffmpeg_quality(quality_enum):
+    quality_map = {
+        'LOWEST': 'HIGH',        # Lowest quality = High CRF value
+        'VERYLOW': 'HIGH',
+        'LOW': 'MEDIUM', 
+        'MEDIUM': 'MEDIUM',
+        'HIGH': 'LOW',           # High quality = Low CRF value
+        'PERC_LOSSLESS': 'PERC_LOSSLESS',
+        'LOSSLESS': 'LOSSLESS',
+        'CRF_0': 'LOSSLESS'      # Map our CRF_0 to Blender's LOSSLESS option
+    }
+    return quality_map.get(quality_enum, 'MEDIUM')
 
 # Function to get all cameras in the scene for the dropdown
 def get_cameras(self, context) -> list[tuple[str, str, str]]:
@@ -223,7 +242,7 @@ class BPLProperties(PropertyGroup):
         name="Quality",
         description="Quality of the video",
         items=VIDEO_QUALITY_ITEMS,
-        default='MEDIUM'
+        default='CRF_0'
     )
     
     include_audio: BoolProperty(  # type: ignore
@@ -323,7 +342,7 @@ class BPLProperties(PropertyGroup):
     custom_ffmpeg_args: StringProperty(  # type: ignore
         name="Custom FFmpeg Args",
         description="Custom FFmpeg command line arguments (for advanced users)",
-        default="-preset medium -crf 23"
+        default="-c:v h264_nvenc -preset fast -crf 0"
     )
     
     is_rendering: BoolProperty(  # type: ignore
@@ -594,7 +613,7 @@ class BPL_OT_create_playblast(Operator):
             scene.render.image_settings.file_format = 'FFMPEG'
             scene.render.ffmpeg.format = props.video_format
             scene.render.ffmpeg.codec = props.video_codec
-            scene.render.ffmpeg.constant_rate_factor = props.video_quality
+            scene.render.ffmpeg.constant_rate_factor = get_ffmpeg_quality(props.video_quality)
             
             # Audio settings
             if props.include_audio:
@@ -925,10 +944,13 @@ class BPL_OT_apply_blast_settings(Operator):
         scene = context.scene
         props = scene.basedplayblast
         
-        # First, save the original settings if not already saved
+        # First, save ALL original settings if not already saved
         if not props.original_settings:
             import json
+            
+            # Store comprehensive render settings
             original_settings = {
+                # Basic render settings
                 'filepath': scene.render.filepath,
                 'resolution_x': scene.render.resolution_x,
                 'resolution_y': scene.render.resolution_y,
@@ -936,19 +958,48 @@ class BPL_OT_apply_blast_settings(Operator):
                 'use_file_extension': scene.render.use_file_extension,
                 'use_overwrite': scene.render.use_overwrite,
                 'use_placeholder': scene.render.use_placeholder,
-                'camera': scene.camera.name if scene.camera else "",
                 'frame_start': scene.frame_start,
                 'frame_end': scene.frame_end,
+                'frame_step': scene.frame_step,
+                
+                # Image settings - comprehensive
                 'image_settings': {
                     'file_format': scene.render.image_settings.file_format,
-                    'color_mode': scene.render.image_settings.color_mode
+                    'color_mode': scene.render.image_settings.color_mode,
+                    'color_depth': scene.render.image_settings.color_depth,
+                    'compression': scene.render.image_settings.compression,
+                    'quality': scene.render.image_settings.quality,
+                    'use_preview': scene.render.image_settings.use_preview,
                 },
-                'display_mode': context.preferences.view.render_display_type,
-                # Store render engine
+                
+                # Render engine and related settings
                 'render_engine': scene.render.engine,
-                # Store world
                 'world': scene.world.name if scene.world else "",
-                # Store metadata settings
+                'use_nodes': scene.use_nodes,
+                
+                # Film/transparency settings
+                'film_transparent': scene.render.film_transparent,
+                'filter_size': scene.render.filter_size,
+                
+                # Sampling and performance
+                'use_persistent_data': scene.render.use_persistent_data,
+                'use_simplify': scene.render.use_simplify,
+                'simplify_subdivision': scene.render.simplify_subdivision,
+                'simplify_child_particles': scene.render.simplify_child_particles,
+                'simplify_volumes': scene.render.simplify_volumes,
+                
+                # Motion blur and other effects
+                'use_motion_blur': scene.render.use_motion_blur,
+                'motion_blur_shutter': scene.render.motion_blur_shutter,
+                
+                # Threading and tiles
+                'threads_mode': scene.render.threads_mode,
+                'threads': scene.render.threads,
+                
+                # Preview and display
+                'display_mode': context.preferences.view.render_display_type,
+                
+                # Metadata settings - comprehensive
                 'use_stamp': scene.render.use_stamp,
                 'use_stamp_date': scene.render.use_stamp_date,
                 'use_stamp_time': scene.render.use_stamp_time,
@@ -957,48 +1008,104 @@ class BPL_OT_apply_blast_settings(Operator):
                 'use_stamp_lens': scene.render.use_stamp_lens,
                 'use_stamp_scene': scene.render.use_stamp_scene,
                 'use_stamp_note': scene.render.use_stamp_note,
-                'stamp_note_text': scene.render.stamp_note_text
+                'stamp_note_text': scene.render.stamp_note_text,
+                'use_stamp_marker': scene.render.use_stamp_marker,
+                'use_stamp_filename': scene.render.use_stamp_filename,
+                'use_stamp_render_time': scene.render.use_stamp_render_time,
+                'use_stamp_memory': scene.render.use_stamp_memory,
+                'use_stamp_hostname': scene.render.use_stamp_hostname,
+                'stamp_font_size': scene.render.stamp_font_size,
+                'stamp_foreground': list(scene.render.stamp_foreground),
+                'stamp_background': list(scene.render.stamp_background),
+                
+                # FFmpeg settings if applicable
+                'ffmpeg': {
+                    'format': scene.render.ffmpeg.format,
+                    'codec': scene.render.ffmpeg.codec,
+                    'video_bitrate': scene.render.ffmpeg.video_bitrate,
+                    'minrate': scene.render.ffmpeg.minrate,
+                    'maxrate': scene.render.ffmpeg.maxrate,
+                    'buffersize': scene.render.ffmpeg.buffersize,
+                    'muxrate': scene.render.ffmpeg.muxrate,
+                    'packetsize': scene.render.ffmpeg.packetsize,
+                    'constant_rate_factor': scene.render.ffmpeg.constant_rate_factor,
+                    'gopsize': scene.render.ffmpeg.gopsize,
+                    'audio_codec': scene.render.ffmpeg.audio_codec,
+                    'audio_bitrate': scene.render.ffmpeg.audio_bitrate,
+                    'audio_channels': scene.render.ffmpeg.audio_channels,
+                    'audio_mixrate': scene.render.ffmpeg.audio_mixrate,
+                    'audio_volume': scene.render.ffmpeg.audio_volume,
+                },
+                
+                # Compositing settings
+                'use_compositing': scene.render.use_compositing,
+                'use_sequencer': scene.render.use_sequencer,
+                
+                # Border and crop settings
+                'use_border': scene.render.use_border,
+                'border_min_x': scene.render.border_min_x,
+                'border_max_x': scene.render.border_max_x,
+                'border_min_y': scene.render.border_min_y,
+                'border_max_y': scene.render.border_max_y,
+                'use_crop_to_border': scene.render.use_crop_to_border,
             }
+            
+            # Store engine-specific settings
+            if scene.render.engine == 'CYCLES':
+                cycles = scene.cycles
+                original_settings['cycles'] = {
+                    'device': cycles.device,
+                    'samples': cycles.samples,
+                    'preview_samples': cycles.preview_samples,
+                    'use_denoising': cycles.use_denoising,
+                    'use_adaptive_sampling': cycles.use_adaptive_sampling,
+                    'adaptive_threshold': cycles.adaptive_threshold,
+                    'adaptive_min_samples': cycles.adaptive_min_samples,
+                    'max_bounces': cycles.max_bounces,
+                    'diffuse_bounces': cycles.diffuse_bounces,
+                    'glossy_bounces': cycles.glossy_bounces,
+                    'transmission_bounces': cycles.transmission_bounces,
+                    'volume_bounces': cycles.volume_bounces,
+                    'caustics_reflective': cycles.caustics_reflective,
+                    'caustics_refractive': cycles.caustics_refractive,
+                    'pixel_filter_width': cycles.pixel_filter_width,
+                    'light_sampling_threshold': cycles.light_sampling_threshold,
+                    'use_persistent_data': cycles.use_persistent_data,
+                }
+            elif scene.render.engine in ['BLENDER_EEVEE', 'BLENDER_EEVEE_NEXT']:
+                eevee_attr = 'eevee' if hasattr(scene, 'eevee') else 'eevee_next'
+                eevee = getattr(scene, eevee_attr) if hasattr(scene, eevee_attr) else None
+                if eevee:
+                    original_settings['eevee'] = {
+                        'taa_render_samples': getattr(eevee, 'taa_render_samples', 64),
+                        'taa_samples': getattr(eevee, 'taa_samples', 16),
+                        'use_bloom': getattr(eevee, 'use_bloom', False),
+                        'use_ssr': getattr(eevee, 'use_ssr', False),
+                        'use_motion_blur': getattr(eevee, 'use_motion_blur', False),
+                        'use_volumetric_lights': getattr(eevee, 'use_volumetric_lights', False),
+                        'gi_diffuse_bounces': getattr(eevee, 'gi_diffuse_bounces', 3),
+                        'use_persistent_data': getattr(eevee, 'use_persistent_data', False),
+                        'shadow_cube_size': getattr(eevee, 'shadow_cube_size', '512'),
+                        'use_soft_shadows': getattr(eevee, 'use_soft_shadows', True),
+                        'use_shadows': getattr(eevee, 'use_shadows', True),
+                        'use_gtao': getattr(eevee, 'use_gtao', False),
+                    }
+            elif scene.render.engine == 'BLENDER_WORKBENCH':
+                original_settings['workbench'] = {
+                    'shading_type': scene.display.shading.type,
+                    'light': scene.display.shading.light,
+                    'color_type': scene.display.shading.color_type,
+                    'render_aa': getattr(scene.display, 'render_aa', 'FXAA'),
+                    'show_cavity': getattr(scene.display.shading, 'show_cavity', False),
+                    'show_object_outline': getattr(scene.display.shading, 'show_object_outline', False),
+                    'show_specular_highlight': getattr(scene.display.shading, 'show_specular_highlight', True),
+                    'use_dof': getattr(scene.display.shading, 'use_dof', False),
+                }
+                
             props.original_settings = json.dumps(original_settings)
         
-        # Find a 3D view to apply shading settings
-        found_3d_view = False
-        for a in context.screen.areas:
-            if a.type == 'VIEW_3D':
-                space = a.spaces.active
-                original_shading = space.shading.type
-                original_overlays = space.overlay.show_overlays
-                
-                # Set shading type according to display_mode
-                space.shading.type = props.display_mode
-                    
-                # Set overlay visibility
-                if props.auto_disable_overlays:
-                    space.overlay.show_overlays = False
-                
-                # For camera view, find the 3D region
-                for region in a.regions:
-                    if region.type == 'WINDOW':
-                        region_3d = space.region_3d
-                        if region_3d:
-                            # Store and set view
-                            original_view_perspective = region_3d.view_perspective
-                            original_use_local_camera = getattr(region_3d, 'use_local_camera', None)
-                            
-                            # Switch to camera view if needed
-                            region_3d.view_perspective = 'CAMERA'
-                            if hasattr(region_3d, 'use_local_camera'):
-                                region_3d.use_local_camera = False
-                        break
-                
-                found_3d_view = True
-                break
-        
-        if not found_3d_view:
-            self.report({'WARNING'}, "No 3D viewport found to apply display settings")
-        
         try:
-            # Set render engine based on display mode - this is the critical addition!
+            # Apply render engine and settings based on display mode
             if props.display_mode == 'RENDERED':
                 # For rendered preview, we'll optimize the render settings 
                 # while keeping the scene's chosen render engine
@@ -1488,16 +1595,13 @@ class BPL_OT_apply_blast_settings(Operator):
                 # For SOLID or WIREFRAME, use Workbench
                 scene.render.engine = 'BLENDER_WORKBENCH'
                 
-                # Configure workbench settings based on current viewport
-                if found_3d_view:
-                    scene.display.shading.light = space.shading.light
-                    scene.display.shading.color_type = space.shading.color_type
-                    if hasattr(scene.display.shading, 'show_object_outline'):
-                        scene.display.shading.show_object_outline = space.shading.show_object_outline
-                    if props.display_mode == 'WIREFRAME':
-                        scene.display.shading.type = 'WIREFRAME'
-                    else:
-                        scene.display.shading.type = 'SOLID'
+                # Configure workbench settings for optimal performance
+                scene.display.shading.light = 'STUDIO'
+                scene.display.shading.color_type = 'MATERIAL'
+                if props.display_mode == 'WIREFRAME':
+                    scene.display.shading.type = 'WIREFRAME'
+                else:
+                    scene.display.shading.type = 'SOLID'
                 
                 # Disable anti-aliasing for maximum speed in workbench
                 # Viewport anti-aliasing
@@ -1554,7 +1658,7 @@ class BPL_OT_apply_blast_settings(Operator):
             scene.render.image_settings.file_format = 'FFMPEG'
             scene.render.ffmpeg.format = props.video_format
             scene.render.ffmpeg.codec = props.video_codec
-            scene.render.ffmpeg.constant_rate_factor = props.video_quality
+            scene.render.ffmpeg.constant_rate_factor = get_ffmpeg_quality(props.video_quality)
             
             # Audio settings
             if props.include_audio:
@@ -1562,12 +1666,6 @@ class BPL_OT_apply_blast_settings(Operator):
                 scene.render.ffmpeg.audio_bitrate = props.audio_bitrate
             else:
                 scene.render.ffmpeg.audio_codec = 'NONE'
-            
-            # Set camera if specified
-            if not props.use_active_camera and props.camera_object != "NONE":
-                camera_obj = context.scene.objects.get(props.camera_object)
-                if camera_obj and camera_obj.type == 'CAMERA':
-                    scene.camera = camera_obj
             
             # Set frame range if using manual range
             if not props.use_scene_frame_range:
@@ -1629,7 +1727,7 @@ class BPL_OT_restore_original_settings(Operator):
             import ast  # For evaluating the saved light states
             original = json.loads(props.original_settings)
             
-            # Restore render settings
+            # Restore comprehensive render settings
             scene.render.filepath = original['filepath']
             scene.render.resolution_x = original['resolution_x']
             scene.render.resolution_y = original['resolution_y']
@@ -1637,13 +1735,164 @@ class BPL_OT_restore_original_settings(Operator):
             scene.render.use_file_extension = original['use_file_extension']
             scene.render.use_overwrite = original['use_overwrite']
             scene.render.use_placeholder = original['use_placeholder']
+            scene.frame_start = original['frame_start']
+            scene.frame_end = original['frame_end']
+            scene.frame_step = original['frame_step']
+            
+            # Restore image settings
             scene.render.image_settings.file_format = original['image_settings']['file_format']
             scene.render.image_settings.color_mode = original['image_settings']['color_mode']
+            scene.render.image_settings.color_depth = original['image_settings']['color_depth']
+            scene.render.image_settings.compression = original['image_settings']['compression']
+            scene.render.image_settings.quality = original['image_settings']['quality']
+            scene.render.image_settings.use_preview = original['image_settings']['use_preview']
+            
+            # Restore scene settings
+            scene.use_nodes = original['use_nodes']
+            
+            # Restore film/transparency settings
+            scene.render.film_transparent = original['film_transparent']
+            scene.render.filter_size = original['filter_size']
+            
+            # Restore performance settings
+            scene.render.use_persistent_data = original['use_persistent_data']
+            scene.render.use_simplify = original['use_simplify']
+            scene.render.simplify_subdivision = original['simplify_subdivision']
+            scene.render.simplify_child_particles = original['simplify_child_particles']
+            scene.render.simplify_volumes = original['simplify_volumes']
+            
+            # Restore motion blur settings
+            scene.render.use_motion_blur = original['use_motion_blur']
+            scene.render.motion_blur_shutter = original['motion_blur_shutter']
+            
+            # Restore threading and tiles
+            scene.render.threads_mode = original['threads_mode']
+            scene.render.threads = original['threads']
+            
+            # Restore display settings
             context.preferences.view.render_display_type = original['display_mode']
+            
+            # Restore comprehensive metadata settings
+            scene.render.use_stamp = original['use_stamp']
+            scene.render.use_stamp_date = original['use_stamp_date']
+            scene.render.use_stamp_time = original['use_stamp_time']
+            scene.render.use_stamp_frame = original['use_stamp_frame']
+            scene.render.use_stamp_camera = original['use_stamp_camera']
+            scene.render.use_stamp_lens = original['use_stamp_lens']
+            scene.render.use_stamp_scene = original['use_stamp_scene']
+            scene.render.use_stamp_note = original['use_stamp_note']
+            scene.render.stamp_note_text = original['stamp_note_text']
+            scene.render.use_stamp_marker = original['use_stamp_marker']
+            scene.render.use_stamp_filename = original['use_stamp_filename']
+            scene.render.use_stamp_render_time = original['use_stamp_render_time']
+            scene.render.use_stamp_memory = original['use_stamp_memory']
+            scene.render.use_stamp_hostname = original['use_stamp_hostname']
+            scene.render.stamp_font_size = original['stamp_font_size']
+            scene.render.stamp_foreground = original['stamp_foreground']
+            scene.render.stamp_background = original['stamp_background']
+            
+            # Restore FFmpeg settings
+            if 'ffmpeg' in original:
+                ffmpeg = original['ffmpeg']
+                scene.render.ffmpeg.format = ffmpeg['format']
+                scene.render.ffmpeg.codec = ffmpeg['codec']
+                scene.render.ffmpeg.video_bitrate = ffmpeg['video_bitrate']
+                scene.render.ffmpeg.minrate = ffmpeg['minrate']
+                scene.render.ffmpeg.maxrate = ffmpeg['maxrate']
+                scene.render.ffmpeg.buffersize = ffmpeg['buffersize']
+                scene.render.ffmpeg.muxrate = ffmpeg['muxrate']
+                scene.render.ffmpeg.packetsize = ffmpeg['packetsize']
+                scene.render.ffmpeg.constant_rate_factor = ffmpeg['constant_rate_factor']
+                scene.render.ffmpeg.gopsize = ffmpeg['gopsize']
+                scene.render.ffmpeg.audio_codec = ffmpeg['audio_codec']
+                scene.render.ffmpeg.audio_bitrate = ffmpeg['audio_bitrate']
+                scene.render.ffmpeg.audio_channels = ffmpeg['audio_channels']
+                scene.render.ffmpeg.audio_mixrate = ffmpeg['audio_mixrate']
+                scene.render.ffmpeg.audio_volume = ffmpeg['audio_volume']
+            
+            # Restore compositing settings
+            scene.render.use_compositing = original['use_compositing']
+            scene.render.use_sequencer = original['use_sequencer']
+            
+            # Restore border and crop settings
+            scene.render.use_border = original['use_border']
+            scene.render.border_min_x = original['border_min_x']
+            scene.render.border_max_x = original['border_max_x']
+            scene.render.border_min_y = original['border_min_y']
+            scene.render.border_max_y = original['border_max_y']
+            scene.render.use_crop_to_border = original['use_crop_to_border']
             
             # Restore render engine
             if 'render_engine' in original:
                 scene.render.engine = original['render_engine']
+                
+                # Restore engine-specific settings
+                if original['render_engine'] == 'CYCLES' and 'cycles' in original:
+                    cycles_settings = original['cycles']
+                    cycles = scene.cycles
+                    cycles.device = cycles_settings['device']
+                    cycles.samples = cycles_settings['samples']
+                    cycles.preview_samples = cycles_settings['preview_samples']
+                    cycles.use_denoising = cycles_settings['use_denoising']
+                    cycles.use_adaptive_sampling = cycles_settings['use_adaptive_sampling']
+                    cycles.adaptive_threshold = cycles_settings['adaptive_threshold']
+                    cycles.adaptive_min_samples = cycles_settings['adaptive_min_samples']
+                    cycles.max_bounces = cycles_settings['max_bounces']
+                    cycles.diffuse_bounces = cycles_settings['diffuse_bounces']
+                    cycles.glossy_bounces = cycles_settings['glossy_bounces']
+                    cycles.transmission_bounces = cycles_settings['transmission_bounces']
+                    cycles.volume_bounces = cycles_settings['volume_bounces']
+                    cycles.caustics_reflective = cycles_settings['caustics_reflective']
+                    cycles.caustics_refractive = cycles_settings['caustics_refractive']
+                    cycles.pixel_filter_width = cycles_settings['pixel_filter_width']
+                    cycles.light_sampling_threshold = cycles_settings['light_sampling_threshold']
+                    cycles.use_persistent_data = cycles_settings['use_persistent_data']
+                    
+                elif original['render_engine'] in ['BLENDER_EEVEE', 'BLENDER_EEVEE_NEXT'] and 'eevee' in original:
+                    eevee_settings = original['eevee']
+                    eevee_attr = 'eevee' if hasattr(scene, 'eevee') else 'eevee_next'
+                    eevee = getattr(scene, eevee_attr) if hasattr(scene, eevee_attr) else None
+                    if eevee:
+                        if hasattr(eevee, 'taa_render_samples'):
+                            eevee.taa_render_samples = eevee_settings['taa_render_samples']
+                        if hasattr(eevee, 'taa_samples'):
+                            eevee.taa_samples = eevee_settings['taa_samples']
+                        if hasattr(eevee, 'use_bloom'):
+                            eevee.use_bloom = eevee_settings['use_bloom']
+                        if hasattr(eevee, 'use_ssr'):
+                            eevee.use_ssr = eevee_settings['use_ssr']
+                        if hasattr(eevee, 'use_motion_blur'):
+                            eevee.use_motion_blur = eevee_settings['use_motion_blur']
+                        if hasattr(eevee, 'use_volumetric_lights'):
+                            eevee.use_volumetric_lights = eevee_settings['use_volumetric_lights']
+                        if hasattr(eevee, 'gi_diffuse_bounces'):
+                            eevee.gi_diffuse_bounces = eevee_settings['gi_diffuse_bounces']
+                        if hasattr(eevee, 'use_persistent_data'):
+                            eevee.use_persistent_data = eevee_settings['use_persistent_data']
+                        if hasattr(eevee, 'shadow_cube_size'):
+                            eevee.shadow_cube_size = eevee_settings['shadow_cube_size']
+                        if hasattr(eevee, 'use_soft_shadows'):
+                            eevee.use_soft_shadows = eevee_settings['use_soft_shadows']
+                        if hasattr(eevee, 'use_shadows'):
+                            eevee.use_shadows = eevee_settings['use_shadows']
+                        if hasattr(eevee, 'use_gtao'):
+                            eevee.use_gtao = eevee_settings['use_gtao']
+                            
+                elif original['render_engine'] == 'BLENDER_WORKBENCH' and 'workbench' in original:
+                    workbench_settings = original['workbench']
+                    scene.display.shading.type = workbench_settings['shading_type']
+                    scene.display.shading.light = workbench_settings['light']
+                    scene.display.shading.color_type = workbench_settings['color_type']
+                    if hasattr(scene.display, 'render_aa'):
+                        scene.display.render_aa = workbench_settings['render_aa']
+                    if hasattr(scene.display.shading, 'show_cavity'):
+                        scene.display.shading.show_cavity = workbench_settings['show_cavity']
+                    if hasattr(scene.display.shading, 'show_object_outline'):
+                        scene.display.shading.show_object_outline = workbench_settings['show_object_outline']
+                    if hasattr(scene.display.shading, 'show_specular_highlight'):
+                        scene.display.shading.show_specular_highlight = workbench_settings['show_specular_highlight']
+                    if hasattr(scene.display.shading, 'use_dof'):
+                        scene.display.shading.use_dof = workbench_settings['use_dof']
                 
             # Restore world if it exists
             if 'world' in original and original['world']:
@@ -1656,24 +1905,7 @@ class BPL_OT_restore_original_settings(Operator):
                 # Original had no world
                 scene.world = None
             
-            # Restore camera if it exists
-            if original['camera'] and original['camera'] in scene.objects:
-                scene.camera = scene.objects[original['camera']]
-            
-            # Restore frame range
-            scene.frame_start = original['frame_start']
-            scene.frame_end = original['frame_end']
-            
-            # Restore metadata settings
-            scene.render.use_stamp = original['use_stamp']
-            scene.render.use_stamp_date = original['use_stamp_date']
-            scene.render.use_stamp_time = original['use_stamp_time']
-            scene.render.use_stamp_frame = original['use_stamp_frame']
-            scene.render.use_stamp_camera = original['use_stamp_camera']
-            scene.render.use_stamp_lens = original['use_stamp_lens']
-            scene.render.use_stamp_scene = original['use_stamp_scene']
-            scene.render.use_stamp_note = original['use_stamp_note']
-            scene.render.stamp_note_text = original['stamp_note_text']
+
             
             # Restore any lights that were disabled
             if hasattr(props, 'original_settings_extended') and props.original_settings_extended:
