@@ -1,4 +1,3 @@
-
 import bpy # type: ignore
 import os
 import subprocess
@@ -226,7 +225,7 @@ class BPLProperties(PropertyGroup):
         name="Quality",
         description="Quality of the video",
         items=VIDEO_QUALITY_ITEMS,
-        default='MEDIUM'
+        default='PERC_LOSSLESS'
     )
     
     include_audio: BoolProperty(  # type: ignore
@@ -552,224 +551,6 @@ class BPL_OT_create_playblast(Operator):
         
         # DEBUG: Check engine at very start
         print(f"DEBUG: Engine at very start of invoke: {scene.render.engine}")
-        
-        # CRITICAL: Store comprehensive original settings FIRST, before ANY logic runs - ALWAYS REFRESH
-        # Clear any existing settings to ensure we capture current state
-        props.original_settings = ""
-        if True:  # Always run this now
-            import json
-            
-            def safe_getattr(obj, attr, default=None):
-                try:
-                    return getattr(obj, attr, default)
-                except:
-                    return default
-            
-            def make_json_serializable(obj):
-                if isinstance(obj, dict):
-                    return {key: make_json_serializable(value) for key, value in obj.items()}
-                elif isinstance(obj, (list, tuple)):
-                    return [make_json_serializable(item) for item in obj]
-                elif isinstance(obj, (str, int, float, bool, type(None))):
-                    return obj
-                else:
-                    try:
-                        json.dumps(obj)
-                        return obj
-                    except:
-                        return str(obj)
-            
-            # Store ALL original settings comprehensively - EXACT copy from apply_blast_settings
-            original_settings = {
-                # SCENE.RENDER - Complete render settings
-                'render_engine': scene.render.engine,
-                'filepath': scene.render.filepath,
-                'resolution_x': scene.render.resolution_x,
-                'resolution_y': scene.render.resolution_y,
-                'resolution_percentage': scene.render.resolution_percentage,
-                'pixel_aspect_x': scene.render.pixel_aspect_x,
-                'pixel_aspect_y': scene.render.pixel_aspect_y,
-                'use_file_extension': scene.render.use_file_extension,
-                'use_overwrite': scene.render.use_overwrite,
-                'use_placeholder': scene.render.use_placeholder,
-                'frame_start': scene.frame_start,
-                'frame_end': scene.frame_end,
-                'frame_step': scene.frame_step,
-                'frame_current': scene.frame_current,
-                
-                # Film settings
-                'film_transparent': scene.render.film_transparent,
-                'filter_size': scene.render.filter_size,
-                
-                # Performance settings
-                'use_persistent_data': scene.render.use_persistent_data,
-                'use_simplify': scene.render.use_simplify,
-                'simplify_subdivision': scene.render.simplify_subdivision,
-                'simplify_child_particles': scene.render.simplify_child_particles,
-                'simplify_volumes': scene.render.simplify_volumes,
-                'simplify_subdivision_render': safe_getattr(scene.render, 'simplify_subdivision_render', 6),
-                'simplify_child_particles_render': safe_getattr(scene.render, 'simplify_child_particles_render', 1.0),
-                'simplify_volumes_render': safe_getattr(scene.render, 'simplify_volumes_render', 1.0),
-                
-                # Motion blur
-                'use_motion_blur': scene.render.use_motion_blur,
-                'motion_blur_shutter': scene.render.motion_blur_shutter,
-                'motion_blur_shutter_curve': str(safe_getattr(scene.render, 'motion_blur_shutter_curve', 'AUTO')),
-                'rolling_shutter_type': safe_getattr(scene.render, 'rolling_shutter_type', 'NONE'),
-                'rolling_shutter_duration': safe_getattr(scene.render, 'rolling_shutter_duration', 0.1),
-                
-                # Threading
-                'threads_mode': scene.render.threads_mode,
-                'threads': scene.render.threads,
-                
-                # Memory and caching
-                'tile_x': safe_getattr(scene.render, 'tile_x', 64),
-                'tile_y': safe_getattr(scene.render, 'tile_y', 64),
-                'use_save_buffers': safe_getattr(scene.render, 'use_save_buffers', False),
-                
-                # Preview and display
-                'display_mode': context.preferences.view.render_display_type,
-                'preview_pixel_size': safe_getattr(scene.render, 'preview_pixel_size', 'AUTO'),
-                
-                # SCENE.RENDER.IMAGE_SETTINGS - Complete image settings
-                'image_settings': {
-                    'file_format': scene.render.image_settings.file_format,
-                    'color_mode': scene.render.image_settings.color_mode,
-                    'color_depth': scene.render.image_settings.color_depth,
-                    'compression': scene.render.image_settings.compression,
-                    'quality': scene.render.image_settings.quality,
-                    'use_preview': scene.render.image_settings.use_preview,
-                    'exr_codec': safe_getattr(scene.render.image_settings, 'exr_codec', 'ZIP'),
-                    'use_zbuffer': safe_getattr(scene.render.image_settings, 'use_zbuffer', False),
-                    'jpeg2k_codec': safe_getattr(scene.render.image_settings, 'jpeg2k_codec', 'JP2'),
-                    'tiff_codec': safe_getattr(scene.render.image_settings, 'tiff_codec', 'DEFLATE'),
-                },
-                
-                # SCENE.RENDER.FFMPEG - Complete FFmpeg settings
-                'ffmpeg': {
-                    'format': scene.render.ffmpeg.format,
-                    'codec': scene.render.ffmpeg.codec,
-                    'video_bitrate': scene.render.ffmpeg.video_bitrate,
-                    'minrate': scene.render.ffmpeg.minrate,
-                    'maxrate': scene.render.ffmpeg.maxrate,
-                    'buffersize': scene.render.ffmpeg.buffersize,
-                    'muxrate': scene.render.ffmpeg.muxrate,
-                    'packetsize': scene.render.ffmpeg.packetsize,
-                    'constant_rate_factor': scene.render.ffmpeg.constant_rate_factor,
-                    'gopsize': scene.render.ffmpeg.gopsize,
-                    'use_max_b_frames': safe_getattr(scene.render.ffmpeg, 'use_max_b_frames', False),
-                    'max_b_frames': safe_getattr(scene.render.ffmpeg, 'max_b_frames', 2),
-                    'use_autosplit': safe_getattr(scene.render.ffmpeg, 'use_autosplit', False),
-                    'autosplit_size': safe_getattr(scene.render.ffmpeg, 'autosplit_size', 2048),
-                    'audio_codec': scene.render.ffmpeg.audio_codec,
-                    'audio_bitrate': scene.render.ffmpeg.audio_bitrate,
-                    'audio_channels': scene.render.ffmpeg.audio_channels,
-                    'audio_mixrate': scene.render.ffmpeg.audio_mixrate,
-                    'audio_volume': scene.render.ffmpeg.audio_volume,
-                },
-                
-                # Scene/world settings
-                'world': scene.world.name if scene.world else "",
-                'use_nodes': scene.use_nodes,
-                
-                # Compositing settings
-                'use_compositing': scene.render.use_compositing,
-                'use_sequencer': scene.render.use_sequencer,
-                
-                # Border and crop settings
-                'use_border': scene.render.use_border,
-                'border_min_x': scene.render.border_min_x,
-                'border_max_x': scene.render.border_max_x,
-                'border_min_y': scene.render.border_min_y,
-                'border_max_y': scene.render.border_max_y,
-                'use_crop_to_border': scene.render.use_crop_to_border,
-                
-                # Metadata settings - comprehensive
-                'use_stamp': scene.render.use_stamp,
-                'use_stamp_date': scene.render.use_stamp_date,
-                'use_stamp_time': scene.render.use_stamp_time,
-                'use_stamp_frame': scene.render.use_stamp_frame,
-                'use_stamp_camera': scene.render.use_stamp_camera,
-                'use_stamp_lens': scene.render.use_stamp_lens,
-                'use_stamp_scene': scene.render.use_stamp_scene,
-                'use_stamp_note': scene.render.use_stamp_note,
-                'stamp_note_text': scene.render.stamp_note_text,
-                'use_stamp_marker': scene.render.use_stamp_marker,
-                'use_stamp_filename': scene.render.use_stamp_filename,
-                'use_stamp_render_time': scene.render.use_stamp_render_time,
-                'use_stamp_memory': scene.render.use_stamp_memory,
-                'use_stamp_hostname': scene.render.use_stamp_hostname,
-                'stamp_font_size': scene.render.stamp_font_size,
-                'stamp_foreground': [float(x) for x in scene.render.stamp_foreground] if hasattr(scene.render.stamp_foreground, '__iter__') else [1.0, 1.0, 1.0, 1.0],
-                'stamp_background': [float(x) for x in scene.render.stamp_background] if hasattr(scene.render.stamp_background, '__iter__') else [0.0, 0.0, 0.0, 0.8],
-                
-                # Hair settings
-                'hair_type': safe_getattr(scene.render, 'hair_type', 'PATH'),
-                'hair_subdiv': safe_getattr(scene.render, 'hair_subdiv', 3),
-                
-                # SCENE.CYCLES - Complete Cycles settings
-                'cycles': {
-                    'device': safe_getattr(scene.cycles, 'device', 'CPU'),
-                    'feature_set': safe_getattr(scene.cycles, 'feature_set', 'SUPPORTED'),
-                    'shading_system': safe_getattr(scene.cycles, 'shading_system', 'SVM'),
-                    'samples': safe_getattr(scene.cycles, 'samples', 128),
-                    'preview_samples': safe_getattr(scene.cycles, 'preview_samples', 32),
-                    'aa_samples': safe_getattr(scene.cycles, 'aa_samples', 4),
-                    'preview_aa_samples': safe_getattr(scene.cycles, 'preview_aa_samples', 4),
-                    'use_denoising': safe_getattr(scene.cycles, 'use_denoising', True),
-                    'denoiser': safe_getattr(scene.cycles, 'denoiser', 'OPENIMAGEDENOISE'),
-                    'denoising_input_passes': safe_getattr(scene.cycles, 'denoising_input_passes', 'RGB_ALBEDO_NORMAL'),
-                    'use_denoising_input_passes': safe_getattr(scene.cycles, 'use_denoising_input_passes', True),
-                    'denoising_prefilter': safe_getattr(scene.cycles, 'denoising_prefilter', 'ACCURATE'),
-                    'use_adaptive_sampling': safe_getattr(scene.cycles, 'use_adaptive_sampling', True),
-                    'adaptive_threshold': safe_getattr(scene.cycles, 'adaptive_threshold', 0.01),
-                    'adaptive_min_samples': safe_getattr(scene.cycles, 'adaptive_min_samples', 0),
-                    'time_limit': safe_getattr(scene.cycles, 'time_limit', 0.0),
-                    'use_preview_adaptive_sampling': safe_getattr(scene.cycles, 'use_preview_adaptive_sampling', False),
-                    'preview_adaptive_threshold': safe_getattr(scene.cycles, 'preview_adaptive_threshold', 0.1),
-                    'preview_adaptive_min_samples': safe_getattr(scene.cycles, 'preview_adaptive_min_samples', 0),
-                    'seed': safe_getattr(scene.cycles, 'seed', 0),
-                    'use_animated_seed': safe_getattr(scene.cycles, 'use_animated_seed', False),
-                    'sample_clamp_direct': safe_getattr(scene.cycles, 'sample_clamp_direct', 0.0),
-                    'sample_clamp_indirect': safe_getattr(scene.cycles, 'sample_clamp_indirect', 0.0),
-                    'light_sampling_threshold': safe_getattr(scene.cycles, 'light_sampling_threshold', 0.01),
-                    'sample_all_lights_direct': safe_getattr(scene.cycles, 'sample_all_lights_direct', True),
-                    'sample_all_lights_indirect': safe_getattr(scene.cycles, 'sample_all_lights_indirect', True),
-                    'max_bounces': safe_getattr(scene.cycles, 'max_bounces', 12),
-                    'diffuse_bounces': safe_getattr(scene.cycles, 'diffuse_bounces', 4),
-                    'glossy_bounces': safe_getattr(scene.cycles, 'glossy_bounces', 4),
-                    'transmission_bounces': safe_getattr(scene.cycles, 'transmission_bounces', 12),
-                    'volume_bounces': safe_getattr(scene.cycles, 'volume_bounces', 0),
-                    'transparent_max_bounces': safe_getattr(scene.cycles, 'transparent_max_bounces', 8),
-                    'caustics_reflective': safe_getattr(scene.cycles, 'caustics_reflective', True),
-                    'caustics_refractive': safe_getattr(scene.cycles, 'caustics_refractive', True),
-                    'filter_type': safe_getattr(scene.cycles, 'filter_type', 'GAUSSIAN'),
-                    'filter_width': safe_getattr(scene.cycles, 'filter_width', 1.5),
-                    'pixel_filter_width': safe_getattr(scene.cycles, 'pixel_filter_width', 1.5),
-                    'use_persistent_data': safe_getattr(scene.cycles, 'use_persistent_data', False),
-                    'debug_use_spatial_splits': safe_getattr(scene.cycles, 'debug_use_spatial_splits', False),
-                    'debug_use_hair_bvh': safe_getattr(scene.cycles, 'debug_use_hair_bvh', True),
-                    'debug_bvh_type': safe_getattr(scene.cycles, 'debug_bvh_type', 'DYNAMIC_BVH'),
-                    'debug_use_compact_bvh': safe_getattr(scene.cycles, 'debug_use_compact_bvh', True),
-                    'tile_size': safe_getattr(scene.cycles, 'tile_size', 256),
-                    'use_auto_tile': safe_getattr(scene.cycles, 'use_auto_tile', False),
-                    'progressive': safe_getattr(scene.cycles, 'progressive', 'PATH'),
-                    'use_square_samples': safe_getattr(scene.cycles, 'use_square_samples', False),
-                    'blur_glossy': safe_getattr(scene.cycles, 'blur_glossy', 0.0),
-                    'use_transparent_shadows': safe_getattr(scene.cycles, 'use_transparent_shadows', True),
-                    'volume_step_rate': safe_getattr(scene.cycles, 'volume_step_rate', 1.0),
-                    'volume_preview_step_rate': safe_getattr(scene.cycles, 'volume_preview_step_rate', 1.0),
-                    'volume_max_steps': safe_getattr(scene.cycles, 'volume_max_steps', 1024),
-                },
-            }
-            
-            try:
-                safe_settings = make_json_serializable(original_settings)
-                props.original_settings = json.dumps(safe_settings)
-                print(f"Stored comprehensive Cycles settings: samples={original_settings['cycles']['samples']}, engine={original_settings['render_engine']}")
-            except Exception as e:
-                print(f"Error storing settings: {e}")
-                props.original_settings = ""
         
         # Initialize phase
         self._phase = 'SETUP'
@@ -1098,6 +879,11 @@ class BPL_OT_create_playblast(Operator):
             if '.' in file_name:
                 file_name = os.path.splitext(file_name)[0]
             
+            # Add frame range to filename
+            file_name = file_name.rstrip('_')
+            frame_range_str = f"_{self._frame_start}-{self._frame_end}"
+            file_name += frame_range_str
+            
             # For FFMPEG video, set path with proper video extension and NO frame numbers
             video_ext = get_file_extension(props.video_format)
             scene.render.filepath = os.path.join(output_dir, file_name + video_ext)
@@ -1334,6 +1120,11 @@ class BPL_OT_create_playblast(Operator):
             file_name = props.file_name
             if '.' in file_name:
                 file_name = os.path.splitext(file_name)[0]
+            
+            # Add frame range to filename to match the rendered frames
+            file_name = file_name.rstrip('_')
+            frame_range_str = f"_{self._frame_start}-{self._frame_end}"
+            file_name += frame_range_str
             
             # Define video output path
             video_ext = get_file_extension(props.video_format)
@@ -2327,7 +2118,7 @@ class BPL_OT_apply_blast_settings(Operator):
                         if hasattr(cycles, 'adaptive_min_samples'):
                             cycles.adaptive_min_samples = 0  # Allow adaptive sampling to stop early
                             
-                        # Use faster integrator settings
+                        # Use fastest integrator settings
                         if hasattr(cycles, 'light_sampling_threshold'):
                             cycles.light_sampling_threshold = 1.0  # Maximum threshold for fastest convergence
                             
