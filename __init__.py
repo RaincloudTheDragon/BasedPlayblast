@@ -1,4 +1,3 @@
-# bl_info is no longer needed - information now in blender_manifest.toml
 
 import bpy # type: ignore
 import os
@@ -227,7 +226,7 @@ class BPLProperties(PropertyGroup):
         name="Quality",
         description="Quality of the video",
         items=VIDEO_QUALITY_ITEMS,
-        default='LOSSLESS'
+        default='MEDIUM'
     )
     
     include_audio: BoolProperty(  # type: ignore
