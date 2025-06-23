@@ -23,3 +23,10 @@
     - Local Blast:
         - Now supports audio! It's off by default, but so long as you have audio in your scene, it will be in the render result.
         - Fixed Rendered Cycles blasts yielding a black screen.
+
+# v1.1.0
+    - Bugfixes
+        - Local blast: Fixed default encoding option resulting in broken video file on some systems by replacing the default with Perceptually lossless instead of Lossless
+        - Local Blast: fixed not appending frame range to end of output name
+    - Features
+        - Added user default preferences for ffmpeg arguments and encoding preset. Addon preferences can be found in the Add-ons menu in Preferences.
