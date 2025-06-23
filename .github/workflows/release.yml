@@ -24,7 +24,7 @@ jobs:
         run: |
           VERSION=$(python -c "import toml; print(toml.load('blender_manifest.toml')['version'])")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "zip_name=BasedPlayblast.v$VERSION.zip" >> $GITHUB_OUTPUT
+          echo "zip_name=BasedPlayblast.${{ inputs.release_tag }}.zip" >> $GITHUB_OUTPUT
       
       - name: Create ZIP
         run: |
