@@ -225,7 +225,7 @@ class BPLProperties(PropertyGroup):
         name="Quality",
         description="Quality of the video",
         items=VIDEO_QUALITY_ITEMS,
-        default='PERC_LOSSLESS'
+        default='MEDIUM'
     )
     
     include_audio: BoolProperty(  # type: ignore
@@ -1612,6 +1612,24 @@ class BPL_OT_sync_file_name(Operator):
         scene.basedplayblast.last_playblast_file = ""
         
         self.report({'INFO'}, f"File name synced with Blender's output file name")
+        return {'FINISHED'}
+
+# New operator to apply user defaults
+class BPL_OT_apply_user_defaults(Operator):
+    bl_idname = "bpl.apply_user_defaults"
+    bl_label = "Apply User Defaults"
+    bl_description = "Apply the user's default settings from Add-on Preferences to the current scene"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        prefs = context.preferences.addons[__name__].preferences
+        props = context.scene.basedplayblast
+
+        props.video_quality = prefs.default_video_quality
+        props.use_custom_ffmpeg_args = prefs.default_use_custom_ffmpeg_args
+        props.custom_ffmpeg_args = prefs.default_ffmpeg_args
+
+        self.report({'INFO'}, "User defaults applied to scene.")
         return {'FINISHED'}
 
 # New operator to apply blast render settings
@@ -3123,6 +3141,7 @@ class BPL_PT_main_panel(Panel):
         row = props_box.row(align=True)
         row.prop(context.scene, "basedplayblast_show_properties", icon="TRIA_DOWN" if context.scene.get("basedplayblast_show_properties", False) else "TRIA_RIGHT", icon_only=True, emboss=False)
         row.label(text="Properties")
+        row.operator("bpl.apply_user_defaults", text="", icon='PREFERENCES')
         
         if context.scene.get("basedplayblast_show_properties", False):
             # 1. Display Mode
@@ -3202,12 +3221,43 @@ class BPL_PT_main_panel(Panel):
 class BPL_AddonPreferences(AddonPreferences):
     bl_idname = __name__
     
-    # TODO: Add temp path customizability
-    # TODO: Add path to place the flamenco javascript?
-    
+    default_video_quality: EnumProperty(
+        name="Default Video Quality",
+        description="Default quality setting for the add-on. This will be applied on file load.",
+        items=VIDEO_QUALITY_ITEMS,
+        default='PERC_LOSSLESS'
+    )
+
+    default_use_custom_ffmpeg_args: BoolProperty(
+        name="Enable Custom FFmpeg By Default",
+        description="Sets the default state for 'Use Custom FFmpeg Args' when applying user defaults.",
+        default=False
+    )
+
+    default_ffmpeg_args: StringProperty(
+        name="Default FFmpeg Arguments",
+        description="Default custom FFmpeg arguments for advanced users.",
+        default="-c:v h264_nvenc -preset fast -crf 0"
+    )
+
     def draw(self, context):
         layout = self.layout
-        layout.label(text="BasedPlayblast")
+        layout.label(text="BasedPlayblast User Defaults")
+        box = layout.box()
+        box.prop(self, "default_video_quality")
+        box.prop(self, "default_use_custom_ffmpeg_args")
+        box.prop(self, "default_ffmpeg_args")
+
+def on_load_post(dummy):
+    """Applies user defaults after a file is loaded."""
+    # Using a timer ensures that the context is correct
+    def apply_defaults():
+        try:
+            bpy.ops.bpl.apply_user_defaults('EXEC_DEFAULT')
+        except Exception as e:
+            # This can fail if the operator is not ready, so fail silently
+            print(f"BasedPlayblast: Could not apply user defaults on load: {e}")
+    bpy.app.timers.register(apply_defaults, first_interval=0.1)
 
 # Registration
 classes = (
@@ -3217,6 +3267,7 @@ classes = (
     BPL_OT_view_latest_playblast,
     BPL_OT_sync_output_path,
     BPL_OT_sync_file_name,
+    BPL_OT_apply_user_defaults,
     BPL_OT_apply_blast_settings,
     BPL_OT_restore_original_settings,
     BPL_PT_main_panel,
@@ -3233,8 +3284,10 @@ def register():
         name="Show Properties",
         default=False
     )
+    bpy.app.handlers.load_post.append(on_load_post)
 
 def unregister():
+    bpy.app.handlers.load_post.remove(on_load_post)
     # Unregister property for collapsible properties section
     del bpy.types.Scene.basedplayblast_show_properties
     
