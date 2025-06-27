@@ -30,3 +30,7 @@
         - Local Blast: fixed not appending frame range to end of output name
     - Features
         - Added user default preferences for ffmpeg arguments and encoding preset. Addon preferences can be found in the Add-ons menu in Preferences.
+
+# v1.1.1
+    - Bugfixes
+        - Local blast: fixed main operator accidentally setting dimensions to 1280x720 and frame range to 1-250 regardless of what was previously set.

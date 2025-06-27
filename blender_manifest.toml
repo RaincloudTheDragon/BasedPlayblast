@@ -3,7 +3,7 @@ schema_version = "1.0.0"
 id = "basedplayblast"
 name = "BasedPlayblast"
 tagline = "Easily create playblasts from Blender and Flamenco"
-version = "1.1.0"
+version = "1.1.1"
 type = "add-on"
 
 # Optional: Semantic Versioning
