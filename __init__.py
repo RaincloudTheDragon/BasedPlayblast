@@ -1204,9 +1204,12 @@ class BPL_OT_create_playblast(Operator):
                 if self._original_use_local_camera is not None:
                     self._region_3d.use_local_camera = self._original_use_local_camera
         
-        # Restore render settings
+        # PRIMARY RESTORATION: Use self._original_settings first (most reliable)
         if self._original_settings:
             scene = context.scene
+            print("Restoring render settings from self._original_settings...")
+            
+            # Restore render settings - CRITICAL: These must be restored to original values
             scene.render.filepath = self._original_settings['filepath']
             scene.render.resolution_x = self._original_settings['resolution_x']
             scene.render.resolution_y = self._original_settings['resolution_y']
@@ -1219,7 +1222,7 @@ class BPL_OT_create_playblast(Operator):
             scene.render.image_settings.color_mode = self._original_settings['image_settings']['color_mode']
             context.preferences.view.render_display_type = self._original_settings['display_mode']
             
-            # Restore frame range to original values
+            # CRITICAL: Restore frame range to original values - THIS FIXES THE MAIN BUG
             scene.frame_start = self._original_settings['frame_start']
             scene.frame_end = self._original_settings['frame_end']
             
@@ -1233,6 +1236,9 @@ class BPL_OT_create_playblast(Operator):
             scene.render.use_stamp_scene = self._original_settings['use_stamp_scene']
             scene.render.use_stamp_note = self._original_settings['use_stamp_note']
             scene.render.stamp_note_text = self._original_settings['stamp_note_text']
+            
+            print(f"Restored resolution: {scene.render.resolution_x}x{scene.render.resolution_y}")
+            print(f"Restored frame range: {scene.frame_start}-{scene.frame_end}")
         
         # Restore original render engine if it was changed
         if self._original_render_engine is not None:
@@ -1258,11 +1264,14 @@ class BPL_OT_create_playblast(Operator):
                     setattr(cycles, attr, value)
             print(f"Restored original Cycles render settings")
         
-        # Restore comprehensive settings using the EXACT same logic as restore_original_settings
-        if props.original_settings:
+        # SECONDARY RESTORATION: Only use JSON backup if primary restoration didn't work
+        # This prevents conflicts and ensures we don't overwrite the correct restoration
+        if not self._original_settings and props.original_settings:
             try:
+                print("Primary restoration not available, using JSON backup...")
                 import json
                 original = json.loads(props.original_settings)
+                scene = context.scene
                 
                 def safe_restore(obj, attr, value):
                     try:
@@ -1275,14 +1284,10 @@ class BPL_OT_create_playblast(Operator):
                 
                 # Restore render engine first
                 if 'render_engine' in original:
-                    print(f"DEBUG: JSON contains engine: {original['render_engine']}")
-                    print(f"DEBUG: Scene engine before restore: {scene.render.engine}")
                     scene.render.engine = original['render_engine']
-                    print(f"DEBUG: Scene engine after restore: {scene.render.engine}")
                     print(f"Restored render engine to: {original['render_engine']}")
                 
-                # Restore ALL comprehensive settings - EXACT copy from restore_original_settings
-                # SCENE.RENDER - Restore all basic render settings
+                # Restore critical render settings from JSON backup
                 scene.render.filepath = original.get('filepath', scene.render.filepath)
                 scene.render.resolution_x = original.get('resolution_x', scene.render.resolution_x)
                 scene.render.resolution_y = original.get('resolution_y', scene.render.resolution_y)
@@ -1292,10 +1297,15 @@ class BPL_OT_create_playblast(Operator):
                 scene.render.use_file_extension = original.get('use_file_extension', scene.render.use_file_extension)
                 scene.render.use_overwrite = original.get('use_overwrite', scene.render.use_overwrite)
                 scene.render.use_placeholder = original.get('use_placeholder', scene.render.use_placeholder)
+                
+                # CRITICAL: Restore frame range from JSON backup
                 scene.frame_start = original.get('frame_start', scene.frame_start)
                 scene.frame_end = original.get('frame_end', scene.frame_end)
                 scene.frame_step = original.get('frame_step', scene.frame_step)
                 scene.frame_current = original.get('frame_current', 1)
+                
+                print(f"JSON backup restored resolution: {scene.render.resolution_x}x{scene.render.resolution_y}")
+                print(f"JSON backup restored frame range: {scene.frame_start}-{scene.frame_end}")
                 
                 # Film settings
                 scene.render.film_transparent = original.get('film_transparent', scene.render.film_transparent)
