@@ -27,15 +27,17 @@ const JOB_TYPE = {
         // Playblast specific settings
         { key: "resolution_percentage", type: "int32", default: 100, propargs: {min: 1, max: 100}, visible: "submission",
           description: "Percentage of the render resolution to use for playblast"},
+        { key: "png_compression", type: "int32", default: 15, propargs: {min: 0, max: 100}, visible: "submission",
+          description: "PNG compression level (0-100, higher = smaller file)"},
         { key: "keep_frames", type: "bool", default: false, visible: "submission",
           description: "Keep the individual playblast frames after video creation"},
 
         // Automatically evaluated settings:
         { key: "blendfile", type: "string", required: true, description: "Path of the Blend file to playblast", visible: "web" },
         { key: "fps", type: "float", eval: "C.scene.render.fps / C.scene.render.fps_base", visible: "hidden" },
-        { key: "format", type: "string", required: true, default: "JPEG", visible: "web",
+        { key: "format", type: "string", required: true, default: "PNG", visible: "web",
           description: "Image format for playblast frames" },
-        { key: "image_file_extension", type: "string", required: true, default: ".jpg", visible: "hidden",
+        { key: "image_file_extension", type: "string", required: true, default: ".png", visible: "hidden",
           description: "File extension used when creating playblast images" },
         { key: "scene", type: "string", required: true, eval: "C.scene.name", visible: "web",
           description: "Name of the scene to playblast."},
@@ -128,6 +130,10 @@ function authorPlayblastTasks(settings, playblastDir, playblastOutput) {
             args: baseArgs.concat([
                 "--python-expr", `
 import bpy
+
+# Set PNG compression if using PNG format
+if bpy.context.scene.render.image_settings.file_format == 'PNG':
+    bpy.context.scene.render.image_settings.compression = ${settings.png_compression}
 
 # Just render the specified frames via --render-frame
 # Skip using animation=True which would render all frames
