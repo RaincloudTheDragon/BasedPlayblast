@@ -2176,11 +2176,10 @@ class BPL_OT_apply_blast_settings(Operator):
                         if hasattr(cycles, 'transparent_max_bounces'):
                             cycles.transparent_max_bounces = 0  # No transparent bounces
                             
-                        # Optimize tile size for faster rendering
-                        if hasattr(cycles, 'tile_size'):
-                            cycles.tile_size = 64  # Small tiles for faster feedback
+                        # Disable tiling for Cycles (OptiX) to avoid slowdowns
                         if hasattr(cycles, 'use_auto_tile'):
-                            cycles.use_auto_tile = True  # Let Cycles optimize tile size
+                            cycles.use_auto_tile = False
+                        # Intentionally do not override tile_size; keep user/default setting
                             
                         # Use fastest integrator path
                         if hasattr(cycles, 'progressive'):
@@ -2209,6 +2208,13 @@ class BPL_OT_apply_blast_settings(Operator):
                         print(f"Applied optimized Cycles settings for RENDERED mode")
                     
                     # General optimizations regardless of render engine
+                    # Ensure Cycles persistent data is always enabled for animation performance
+                    try:
+                        cy = getattr(scene, 'cycles', None)
+                        if cy and hasattr(cy, 'use_persistent_data'):
+                            cy.use_persistent_data = True
+                    except Exception:
+                        pass
                     
                     # Enable simplify settings for render
                     if hasattr(scene.render, 'use_simplify'):
