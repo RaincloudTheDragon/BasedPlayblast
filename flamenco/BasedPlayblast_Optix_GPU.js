@@ -195,7 +195,7 @@ function authorPlayblastTasks(settings, playblastDir, playblastOutput) {
             blendfile: settings.blendfile,
             args: baseArgs.concat(task_invariant_args).concat([
                 '--python-expr',
-                `import bpy; bpy.context.scene.render.image_settings.compression = ${settings.png_compression}`,
+                `import bpy; bpy.context.scene.render.image_settings.compression = ${settings.png_compression}; bpy.context.scene.render.resolution_percentage = ${settings.resolution_percentage}`,
                 '--render-frame',
                 chunk.replaceAll("-", "..") // Convert to Blender frame range notation.
             ])

@@ -141,6 +141,9 @@ import bpy
 if bpy.context.scene.render.image_settings.file_format == 'PNG':
     bpy.context.scene.render.image_settings.compression = ${settings.png_compression}
 
+# Set resolution percentage for playblast
+bpy.context.scene.render.resolution_percentage = ${settings.resolution_percentage}
+
 # Ensure Cycles persistent data is enabled when available
 cy = getattr(bpy.context.scene, 'cycles', None)
 if cy and hasattr(cy, 'use_persistent_data'):
