@@ -1,5 +1,5 @@
 @echo off
-echo Copying BasedPlayblast.js to Flamenco scripts directory...
+echo Copying BasedPlayblast scripts to Flamenco scripts directory...
 
 :: Create a temporary VBS script to request admin privileges
 echo Set UAC = CreateObject^("Shell.Application"^) > "%temp%\getadmin.vbs"
@@ -15,17 +15,12 @@ if %errorlevel% neq 0 (
 )
 del "%temp%\getadmin.vbs"
 
-:: Source file path (current directory)
+:: Source file paths (current directory)
 set SOURCE_FILE=%~dp0BasedPlayblast.js
+set SOURCE_FILE2=%~dp0BasedPlayblast_Optix_GPU.js
 
 :: Destination directory
-set DEST_DIR=C:\Program Files\Blender Foundation\Flamenco 3.6\scripts
-
-:: Check if source file exists
-if not exist "%SOURCE_FILE%" (
-    echo ERROR: Source file not found: %SOURCE_FILE%
-    goto :end
-)
+set DEST_DIR=C:\Program Files\Blender Foundation\Flamenco 3.7\scripts
 
 :: Check if destination directory exists
 if not exist "%DEST_DIR%" (
@@ -33,13 +28,30 @@ if not exist "%DEST_DIR%" (
     goto :end
 )
 
-:: Copy the file
-copy /Y "%SOURCE_FILE%" "%DEST_DIR%"
-if %errorlevel% equ 0 (
-    echo Successfully copied BasedPlayblast.js to:
-    echo %DEST_DIR%
+:: Copy BasedPlayblast.js if it exists
+if exist "%SOURCE_FILE%" (
+    copy /Y "%SOURCE_FILE%" "%DEST_DIR%"
+    if %errorlevel% equ 0 (
+        echo Successfully copied BasedPlayblast.js to:
+        echo %DEST_DIR%
+    ) else (
+        echo ERROR: Failed to copy BasedPlayblast.js to %DEST_DIR%
+    )
 ) else (
-    echo ERROR: Failed to copy file to %DEST_DIR%
+    echo ERROR: Source file not found: %SOURCE_FILE%
+)
+
+:: Copy BasedPlayblast_Optix_GPU.js if it exists
+if exist "%SOURCE_FILE2%" (
+    copy /Y "%SOURCE_FILE2%" "%DEST_DIR%"
+    if %errorlevel% equ 0 (
+        echo Successfully copied BasedPlayblast_Optix_GPU.js to:
+        echo %DEST_DIR%
+    ) else (
+        echo ERROR: Failed to copy BasedPlayblast_Optix_GPU.js to %DEST_DIR%
+    )
+) else (
+    echo ERROR: Source file not found: %SOURCE_FILE2%
 )
 
 :end
