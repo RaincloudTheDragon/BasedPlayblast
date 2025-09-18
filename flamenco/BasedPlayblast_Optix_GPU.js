@@ -61,6 +61,12 @@ function compileJob(job) {
     print("job: ", job);
 
     const settings = job.settings;
+    // Force PNG output and 15% compression regardless of UI selection
+    settings.format = 'PNG';
+    settings.image_file_extension = '.png';
+    if (settings.png_compression === undefined || settings.png_compression === null) {
+        settings.png_compression = 15;
+    }
     if (videoFormats.indexOf(settings.format) >= 0) {
         throw `This job type only creates image sequences, and not "${settings.format}"`;
     }
@@ -148,10 +154,12 @@ function authorPlayblastTasks(settings, playblastDir, playblastOutput) {
         enable_all_optix,
         '--python-expr',
         "import bpy; bpy.context.scene.cycles.device = 'GPU'",
+        '--python-expr',
+        "import bpy; sc=bpy.context.scene; cy=getattr(sc,'cycles',None);\nif cy and hasattr(cy,'use_persistent_data'): cy.use_persistent_data = True",
         '--render-output',
         path.join(playblastDir, path.basename(playblastOutput)),
         '--render-format',
-        settings.format,
+        'PNG',
     ].concat(blender_args_after);
 
     // Add any experimental flags.

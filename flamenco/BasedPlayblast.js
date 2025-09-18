@@ -53,6 +53,12 @@ function compileJob(job) {
     print("job: ", job);
 
     const settings = job.settings;
+    // Force PNG output and 15% compression regardless of UI selection
+    settings.format = 'PNG';
+    settings.image_file_extension = '.png';
+    if (settings.png_compression === undefined || settings.png_compression === null) {
+        settings.png_compression = 15;
+    }
     if (videoFormats.indexOf(settings.format) >= 0) {
         throw `This job type only creates image sequences, and not "${settings.format}"`;
     }
@@ -135,11 +141,16 @@ import bpy
 if bpy.context.scene.render.image_settings.file_format == 'PNG':
     bpy.context.scene.render.image_settings.compression = ${settings.png_compression}
 
+# Ensure Cycles persistent data is enabled when available
+cy = getattr(bpy.context.scene, 'cycles', None)
+if cy and hasattr(cy, 'use_persistent_data'):
+    cy.use_persistent_data = True
+
 # Just render the specified frames via --render-frame
 # Skip using animation=True which would render all frames
 `,
                 "--render-output", path.join(playblastDir, path.basename(playblastOutput)),
-                "--render-format", settings.format,
+                "--render-format", 'PNG',
                 "--render-frame", chunk.replaceAll("-", "..")
             ])
         });
