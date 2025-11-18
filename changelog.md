@@ -39,3 +39,6 @@
     - Flamenco: enforce PNG (15% compression) and respect resolution percentage.
         - Updated job scripts for CPU/GPU; deployment now targets Flamenco 3.7 and copies both scripts.
     - Apply Blast Render Settings (Cycles): always enable persistent data; disable tiling for faster renders.
+
+# v1.3.0
+    - Updated to support Blender 5.0.0!

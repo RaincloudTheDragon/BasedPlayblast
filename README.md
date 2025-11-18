@@ -17,7 +17,7 @@ BasedPlayblast is a Blender addon that streamlines the process of creating video
 ## Installation
 
 ### Via BlenderKit's Extension Repository (Recommended)
-1. Open Blender (4.3+)
+1. Open Blender (5.0+)
 2. Install BlenderKit via https://www.blenderkit.com/get-blenderkit/
 3. Open Preferences (Ctrl + ,)
 4. Go to **Edit > Preferences > Get Extensions**
@@ -26,7 +26,7 @@ BasedPlayblast is a Blender addon that streamlines the process of creating video
 7. Enjoy automatic updating!
 
 ### Manual Installation
-1. Download the latest release
+1. Download the latest release, or the release that supports your intended Blender version
 2. In Blender, go to **Edit > Preferences > Add-ons**
 3. Click **Install from Disk** and select the downloaded file
 4. Enable the addon in the list
@@ -49,7 +49,7 @@ BasedPlayblast is a Blender addon that streamlines the process of creating video
 
 ## Requirements
 
-- Blender 4.3.0 or higher
+- Blender 5.0.0 or higher
 - Python 3.x (included with Blender)
 
 ## Support
@@ -57,11 +57,3 @@ BasedPlayblast is a Blender addon that streamlines the process of creating video
 - **Documentation**: [GitHub Repository](https://github.com/RaincloudTheDragon/BasedPlayblast)
 - **Issues**: Report bugs or request features on GitHub
 - **License**: GPL-3.0-or-later
-
-## Changelog
-
-### Version 1.0.0
-- Added comprehensive render settings storage and restoration
-- Improved EEVEE raytracing optimization for maximum performance
-- Enhanced material preview mode with automatic studio lighting
-- Fixed various render engine compatibility issues
