@@ -2575,3 +2575,135 @@ Try creating a playblast again. It should render the PNG frames and then automat
 
 ---
 
+_**User (2025-11-18 23:02Z)**_
+
+The 'show properties' dropdown isn't doing anything.
+
+---
+
+_**Agent (model default, mode Agent)**_
+
+
+
+---
+
+
+Checking how the "Show Properties" dropdown/button is implemented:
+
+
+---
+
+<tool-use data-tool-type="grep" data-tool-name="grep">
+<details>
+<summary>Tool use: **grep** • Grep for "show_properties|Show Properties" in "__init__.py" • 6 matches</summary>
+
+Output mode: content
+
+
+| File | Content | Line |
+|------|------|------|
+| `__init__.py` | `row.prop(context.scene, "basedplayblast_show_properties", icon="TRIA_DOWN" if context.scene.get("basedplayblast_show_properties", False) else "TRIA_RIGHT", icon_only=True, emboss=False)` | L3381 |
+| `__init__.py` | `if context.scene.get("basedplayblast_show_properties", False):` | L3385 |
+| `__init__.py` | `bpy.types.Scene.basedplayblast_show_properties = BoolProperty(` | L3522 |
+| `__init__.py` | `name="Show Properties",` | L3523 |
+| `__init__.py` | `if hasattr(bpy.types.Scene, 'basedplayblast_show_properties'):` | L3534 |
+| `__init__.py` | `del bpy.types.Scene.basedplayblast_show_properties` | L3535 |
+
+
+</details>
+</tool-use>
+
+---
+
+<tool-use data-tool-type="search" data-tool-name="codebase_search">
+<details>
+                <summary>Tool use: **codebase_search** • Searched codebase "How does the show properties button or dropdown work to toggle visibility of properties?" • **13** results</summary>
+            
+| File | Lines |
+|------|-------|
+| `__init__.py` | L3325-3456 |
+| `__init__.py` | L3489-3540 |
+| `__init__.py` | L2933-3456 |
+| `__init__.py` | L157-405 |
+| `__init__.py` | L3325-3487 |
+| `__init__.py` | L3515-3543 |
+| `__init__.py` | L148-405 |
+| `__init__.py` | L157-1683 |
+| `__init__.py` | L1852-2930 |
+| `__init__.py` | L405-1683 |
+| `src/Playblast_Animation_Plugin_Ver2_3.py` | L584-654 |
+| `src/Playblast_Animation_Plugin_Ver2_3.py` | L629-659 |
+| `__init__.py` | L3328-3498 |
+
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+The code uses `context.scene.get("basedplayblast_show_properties", False)`, which treats it as a dictionary key, but it's a registered BoolProperty. Updating it to access the property directly:
+
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: __init__.py</summary>
+
+</details>
+</tool-use>
+
+---
+
+<tool-use data-tool-type="write" data-tool-name="search_replace">
+
+<details><summary>Tool use: **code_edit** • Edit file: __init__.py</summary>
+
+**Chunk 1**
+Lines added: 3, lines removed: 2
+
+```diff
+@@ -3379,9 +3379,10 @@
+          props_box = layout.box()
+          row = props_box.row(align=True)
+-         row.prop(context.scene, &quot;basedplayblast_show_properties&quot;, icon=&quot;TRIA_DOWN&quot; if context.scene.get(&quot;basedplayblast_show_properties&quot;, False) else &quot;TRIA_RIGHT&quot;, icon_only=True, emboss=False)
++         show_props = getattr(context.scene, &quot;basedplayblast_show_properties&quot;, False)
++         row.prop(context.scene, &quot;basedplayblast_show_properties&quot;, icon=&quot;TRIA_DOWN&quot; if show_props else &quot;TRIA_RIGHT&quot;, icon_only=True, emboss=False)
+          row.label(text=&quot;Properties&quot;)
+          row.operator(&quot;bpl.apply_user_defaults&quot;, text=&quot;&quot;, icon=&#39;PREFERENCES&#39;)
+          
+-         if context.scene.get(&quot;basedplayblast_show_properties&quot;, False):
++         if show_props:
+              # 1. Display Mode
+              display_box = props_box.box()
+```
+
+</details>
+
+</tool-use>
+
+---
+
+<tool-use data-tool-type="unknown" data-tool-name="read_lints">
+<details>
+<summary>Tool use: **read_lints**</summary>
+
+Status: **loading**
+
+
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+
+---
+

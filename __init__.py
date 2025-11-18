@@ -3378,11 +3378,12 @@ class BPL_PT_main_panel(Panel):
         # Properties - single collapsible section
         props_box = layout.box()
         row = props_box.row(align=True)
-        row.prop(context.scene, "basedplayblast_show_properties", icon="TRIA_DOWN" if context.scene.get("basedplayblast_show_properties", False) else "TRIA_RIGHT", icon_only=True, emboss=False)
+        show_props = getattr(context.scene, "basedplayblast_show_properties", False)
+        row.prop(context.scene, "basedplayblast_show_properties", icon="TRIA_DOWN" if show_props else "TRIA_RIGHT", icon_only=True, emboss=False)
         row.label(text="Properties")
         row.operator("bpl.apply_user_defaults", text="", icon='PREFERENCES')
         
-        if context.scene.get("basedplayblast_show_properties", False):
+        if show_props:
             # 1. Display Mode
             display_box = props_box.box()
             display_box.label(text="Display Mode", icon='SHADING_RENDERED')
