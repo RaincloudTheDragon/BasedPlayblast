@@ -21,8 +21,6 @@ basedplayblast_updater/
 .idea/
 *.swp
 *.swo 
-# Specstory files
-.specstory/
-.cursorindexingignore
+
 # SpecStory explanation file
 .specstory/.what-is-this.md
