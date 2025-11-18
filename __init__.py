@@ -100,6 +100,51 @@ def get_ffmpeg_quality(quality_enum):
     }
     return quality_map.get(quality_enum, 'MEDIUM')
 
+# Helper function to safely set video file format (Blender 5.0 compatibility)
+def set_video_file_format(scene):
+    """Set file format for video output, handling Blender 5.0 API changes."""
+    # Check Blender version - 5.0+ may have different API
+    blender_version = bpy.app.version
+    is_blender_5 = blender_version[0] >= 5
+    
+    if is_blender_5:
+        # In Blender 5.0+, FFMPEG is not in image_settings.file_format enum
+        # Try alternative video formats that might be available
+        # Order matters - try most compatible formats first
+        video_formats = ['AVI_JPEG', 'AVI_RAW', 'H264', 'THEORA', 'XVID', 'FFMPEG']
+        for fmt in video_formats:
+            try:
+                scene.render.image_settings.file_format = fmt
+                print(f"Set video format to: {fmt} (Blender 5.0 compatibility mode)")
+                return True
+            except (TypeError, ValueError, AttributeError) as e:
+                # Continue trying other formats
+                continue
+        
+        # If no video format works, check if we can still use ffmpeg settings
+        # In some Blender versions, ffmpeg might work even without setting file_format
+        if hasattr(scene.render, 'ffmpeg'):
+            print("Warning: Could not set video file_format, but ffmpeg settings are available.")
+            print("Attempting to proceed with ffmpeg configuration...")
+            # Set to a valid image format as fallback
+            try:
+                scene.render.image_settings.file_format = 'PNG'
+                # Note: This might not work for direct video output
+                # User may need to render as image sequence and encode separately
+                return False
+            except:
+                pass
+        
+        return False
+    else:
+        # For Blender < 5.0, use FFMPEG as before
+        try:
+            scene.render.image_settings.file_format = 'FFMPEG'
+            return True
+        except (TypeError, ValueError) as e:
+            print(f"Warning: Could not set FFMPEG format: {e}")
+            return False
+
 # Function to get all cameras in the scene for the dropdown
 def get_cameras(self, context) -> list[tuple[str, str, str]]:
     cameras = []
@@ -385,6 +430,7 @@ class BPL_OT_create_playblast(Operator):
     _original_cycles_viewport = None
     _use_actual_render = False
     _original_cycles_render = None
+    _needs_video_encode = False  # Flag for Blender 5.0 PNG fallback
     
     def modal(self, context, event):
         if event.type == 'ESC':
@@ -431,18 +477,54 @@ class BPL_OT_create_playblast(Operator):
                     bpy.ops.render.render('INVOKE_DEFAULT', animation=True)
                 else:
                     # Use OpenGL viewport rendering for other engines
-                    override = context.copy()
-                    override["area"] = self._area
-                    override["region"] = [r for r in self._area.regions if r.type == 'WINDOW'][0]
-                        
+                    # Check Blender version for compatibility
+                    blender_version = bpy.app.version
+                    is_blender_5 = blender_version[0] >= 5
+                    
                     print(f"Starting OpenGL render with:")
-                    print(f"  - Area: {self._area.type}")
-                    print(f"  - Shading: {self._space.shading.type}")
-                    print(f"  - View perspective: {self._region_3d.view_perspective}")
+                    print(f"  - Area: {self._area.type if self._area else 'None'}")
+                    print(f"  - Shading: {self._space.shading.type if self._space else 'None'}")
+                    print(f"  - View perspective: {self._region_3d.view_perspective if self._region_3d else 'None'}")
                     print(f"  - Scene camera: {context.scene.camera.name if context.scene.camera else 'None'}")
                     
-                    with context.temp_override(**override):
-                        bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True, sequencer=False, write_still=False, view_context=True)
+                    try:
+                        # In Blender 5.0+, use simpler context override or no override
+                        if is_blender_5 and self._area:
+                            # Try to get a valid region
+                            regions = [r for r in self._area.regions if r.type == 'WINDOW']
+                            if regions:
+                                override = context.copy()
+                                override["area"] = self._area
+                                override["region"] = regions[0]
+                                
+                                # In Blender 5.0, view_context parameter might not be needed or might cause issues
+                                # Try without it first, then with it if needed
+                                try:
+                                    with context.temp_override(**override):
+                                        bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True, sequencer=False, write_still=False)
+                                except TypeError:
+                                    # If that fails, try with view_context=False
+                                    with context.temp_override(**override):
+                                        bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True, sequencer=False, write_still=False, view_context=False)
+                            else:
+                                # No valid region, try without override
+                                bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True, sequencer=False, write_still=False)
+                        elif self._area:
+                            # Blender < 5.0, use original approach
+                            override = context.copy()
+                            override["area"] = self._area
+                            override["region"] = [r for r in self._area.regions if r.type == 'WINDOW'][0]
+                            
+                            with context.temp_override(**override):
+                                bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True, sequencer=False, write_still=False, view_context=True)
+                        else:
+                            # No area available, use simple call
+                            bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True, sequencer=False, write_still=False)
+                    except Exception as e:
+                        print(f"Error during OpenGL render: {e}")
+                        self.report({'ERROR'}, f"Render failed: {str(e)}")
+                        self.cleanup(context)
+                        return {'CANCELLED'}
                 
                 # Force redraw of UI
                 for area in context.screen.areas:
@@ -861,20 +943,33 @@ class BPL_OT_create_playblast(Operator):
             output_dir = bpy.path.abspath(props.output_path)
             os.makedirs(output_dir, exist_ok=True)
             
-            # Set file format first
-            scene.render.image_settings.file_format = 'FFMPEG'
-            scene.render.ffmpeg.format = props.video_format
-            scene.render.ffmpeg.codec = props.video_codec
-            scene.render.ffmpeg.constant_rate_factor = get_ffmpeg_quality(props.video_quality)
+            # Set file format first (Blender 5.0 compatible)
+            video_format_set = set_video_file_format(scene)
+            if not video_format_set and hasattr(scene.render, 'ffmpeg'):
+                # Still try to configure ffmpeg even if file_format couldn't be set
+                # This might work in some Blender 5.0 configurations
+                self.report({'WARNING'}, "Could not set video file_format. Attempting to proceed with ffmpeg settings...")
+            elif not video_format_set:
+                self.report({'ERROR'}, "Video rendering not supported in this Blender version.")
+                return {'CANCELLED'}
             
-            # Audio settings
-            if props.include_audio:
-                scene.render.ffmpeg.audio_codec = props.audio_codec
-                scene.render.ffmpeg.audio_bitrate = props.audio_bitrate
+            # Configure ffmpeg settings (these should still work even if file_format is different)
+            if hasattr(scene.render, 'ffmpeg'):
+                scene.render.ffmpeg.format = props.video_format
+                scene.render.ffmpeg.codec = props.video_codec
+                scene.render.ffmpeg.constant_rate_factor = get_ffmpeg_quality(props.video_quality)
+                
+                # Audio settings
+                if props.include_audio:
+                    scene.render.ffmpeg.audio_codec = props.audio_codec
+                    scene.render.ffmpeg.audio_bitrate = props.audio_bitrate
+                else:
+                    scene.render.ffmpeg.audio_codec = 'NONE'
             else:
-                scene.render.ffmpeg.audio_codec = 'NONE'
+                self.report({'ERROR'}, "FFMPEG settings not available in this Blender version.")
+                return {'CANCELLED'}
             
-            # Set output path - critical for FFMPEG video output
+            # Set output path - handle PNG vs video format differently
             file_name = props.file_name
             if '.' in file_name:
                 file_name = os.path.splitext(file_name)[0]
@@ -884,14 +979,26 @@ class BPL_OT_create_playblast(Operator):
             frame_range_str = f"_{self._frame_start}-{self._frame_end}"
             file_name += frame_range_str
             
-            # For FFMPEG video, set path with proper video extension and NO frame numbers
-            video_ext = get_file_extension(props.video_format)
-            scene.render.filepath = os.path.join(output_dir, file_name + video_ext)
+            # Check if we're using PNG format (Blender 5.0 fallback)
+            is_png_format = scene.render.image_settings.file_format == 'PNG'
             
-            # CRITICAL: Disable frame number suffixes for FFMPEG video output
-            scene.render.use_file_extension = True
-            scene.render.use_overwrite = True
-            scene.render.use_placeholder = False
+            if is_png_format:
+                # For PNG format, use proper frame numbering pattern (no video extension)
+                # Blender will append frame numbers automatically
+                scene.render.filepath = os.path.join(output_dir, file_name + "_")
+                scene.render.use_file_extension = True  # This enables frame numbering
+                scene.render.use_overwrite = True
+                scene.render.use_placeholder = False
+                # Store flag that we need to encode after render
+                self._needs_video_encode = True
+            else:
+                # For FFMPEG video, set path with proper video extension and NO frame numbers
+                video_ext = get_file_extension(props.video_format)
+                scene.render.filepath = os.path.join(output_dir, file_name + video_ext)
+                scene.render.use_file_extension = True
+                scene.render.use_overwrite = True
+                scene.render.use_placeholder = False
+                self._needs_video_encode = False
             
             # Confirm FFMPEG format for debugging
             print(f"File format set to: {scene.render.image_settings.file_format}")
@@ -1083,8 +1190,9 @@ class BPL_OT_create_playblast(Operator):
         scene = context.scene
         props = scene.basedplayblast
         
-        # Check if we need to convert frames to video for Cycles
-        if getattr(self, '_use_actual_render', False):
+        # Check if we need to convert frames to video
+        # This happens when: 1) Using Cycles rendering, or 2) PNG format was used (Blender 5.0 fallback)
+        if getattr(self, '_use_actual_render', False) or getattr(self, '_needs_video_encode', False):
             self.convert_frames_to_video(context)
         
         # Find and open the output file
@@ -1114,7 +1222,6 @@ class BPL_OT_create_playblast(Operator):
         
         try:
             output_dir = bpy.path.abspath(props.output_path)
-            frame_output_dir = os.path.join(output_dir, "frames")
             
             # Get file name without extension
             file_name = props.file_name
@@ -1130,21 +1237,119 @@ class BPL_OT_create_playblast(Operator):
             video_ext = get_file_extension(props.video_format)
             video_output = os.path.join(output_dir, file_name + video_ext)
             
-            # Frame pattern for FFmpeg
-            frame_pattern = os.path.join(frame_output_dir, file_name + "_%04d.png")
+            # Frame pattern for FFmpeg - check both possible locations and patterns
+            # Pattern 1: Files in output_dir with format "filename_0001.png"
+            frame_pattern1 = os.path.join(output_dir, file_name + "_%04d.png")
+            # Pattern 2: Files in frames subdirectory
+            frame_output_dir = os.path.join(output_dir, "frames")
+            frame_pattern2 = os.path.join(frame_output_dir, file_name + "_%04d.png")
+            # Pattern 3: Files with .mp4 in name (Blender 5.0 issue - wrong extension in path)
+            frame_pattern3 = os.path.join(output_dir, file_name + ".mp4%04d.png")
             
-            # Build FFmpeg command
+            # Try to find which pattern matches actual files
+            import glob
+            test_patterns = [
+                (frame_pattern1, output_dir),
+                (frame_pattern2, frame_output_dir),
+                (frame_pattern3, output_dir)
+            ]
+            
+            frame_pattern = None
+            frame_dir = None
+            for pattern, dir_path in test_patterns:
+                # Test if files matching this pattern exist
+                test_files = glob.glob(pattern.replace("%04d", "????"))
+                if test_files:
+                    frame_pattern = pattern
+                    frame_dir = dir_path
+                    print(f"Found frame files matching pattern: {pattern}")
+                    break
+            
+            if not frame_pattern:
+                # Fallback: search for any PNG files with the base filename (handle various patterns)
+                # Try pattern with .mp4 in name first (Blender 5.0 issue)
+                all_pngs = glob.glob(os.path.join(output_dir, file_name + ".mp4*.png"))
+                if not all_pngs:
+                    # Try standard pattern
+                    all_pngs = glob.glob(os.path.join(output_dir, file_name + "_*.png"))
+                if not all_pngs:
+                    # Try any PNG files starting with filename
+                    all_pngs = glob.glob(os.path.join(output_dir, file_name + "*.png"))
+                
+                if all_pngs:
+                    # Sort files to find the pattern
+                    all_pngs.sort()
+                    # Try to determine the pattern from the first file
+                    first_file = os.path.basename(all_pngs[0])
+                    if ".mp4" in first_file:
+                        # Handle .mp4####.png pattern
+                        frame_pattern = os.path.join(output_dir, file_name + ".mp4%04d.png")
+                    elif "_" in first_file:
+                        # Handle _####.png pattern
+                        frame_pattern = os.path.join(output_dir, file_name + "_%04d.png")
+                    else:
+                        # Generic pattern
+                        frame_pattern = os.path.join(output_dir, file_name + "%04d.png")
+                    frame_dir = output_dir
+                    print(f"Using detected pattern from files: {frame_pattern}")
+                else:
+                    self.report({'ERROR'}, f"No PNG frame files found to convert. Searched in: {output_dir}")
+                    return
+            
+            # Build FFmpeg command using configured settings
             framerate = scene.render.fps / scene.render.fps_base
+            
+            # Get codec and quality settings from props
+            codec_map = {
+                'H264': 'libx264',
+                'H265': 'libx265',
+                'AV1': 'libaom-av1',
+                'MPEG4': 'mpeg4',
+                'FFV1': 'ffv1'
+            }
+            video_codec = codec_map.get(props.video_codec, 'libx264')
+            
+            # Get CRF value from quality
+            crf_map = {
+                'LOWEST': '28',
+                'VERYLOW': '26',
+                'LOW': '23',
+                'MEDIUM': '20',
+                'HIGH': '18',
+                'PERC_LOSSLESS': '15',
+                'LOSSLESS': '0'
+            }
+            crf_value = crf_map.get(props.video_quality, '20')
             
             ffmpeg_cmd = [
                 "ffmpeg", "-y",  # Overwrite output file
                 "-framerate", str(framerate),
                 "-i", frame_pattern,
-                "-c:v", "libx264",
+                "-c:v", video_codec,
                 "-pix_fmt", "yuv420p",
-                "-crf", "18",  # High quality
-                video_output
+                "-crf", crf_value,
             ]
+            
+            # Add audio if enabled
+            if props.include_audio and props.audio_codec != 'NONE':
+                audio_codec_map = {
+                    'AAC': 'aac',
+                    'AC3': 'ac3',
+                    'MP3': 'mp3'
+                }
+                audio_codec = audio_codec_map.get(props.audio_codec, 'aac')
+                ffmpeg_cmd.extend([
+                    "-c:a", audio_codec,
+                    "-b:a", f"{props.audio_bitrate}k"
+                ])
+            
+            # Add custom ffmpeg args if provided
+            if props.use_custom_ffmpeg_args and props.custom_ffmpeg_args:
+                import shlex
+                custom_args = shlex.split(props.custom_ffmpeg_args)
+                ffmpeg_cmd.extend(custom_args)
+            
+            ffmpeg_cmd.append(video_output)
             
             print(f"Converting frames to video...")
             print(f"Command: {' '.join(ffmpeg_cmd)}")
@@ -1155,20 +1360,25 @@ class BPL_OT_create_playblast(Operator):
             if result.returncode == 0:
                 print(f"Video conversion successful: {video_output}")
                 
-                # Clean up frame files
+                # Clean up frame files from the directory where they were found
                 import glob
-                frame_files = glob.glob(os.path.join(frame_output_dir, "*.png"))
-                for frame_file in frame_files:
+                if frame_dir:
+                    frame_files = glob.glob(os.path.join(frame_dir, file_name + "*.png"))
+                    for frame_file in frame_files:
+                        try:
+                            os.remove(frame_file)
+                            print(f"Removed frame file: {frame_file}")
+                        except Exception as e:
+                            print(f"Could not remove frame file {frame_file}: {e}")
+                
+                # Remove frame directory if it exists and is empty
+                frame_output_dir = os.path.join(output_dir, "frames")
+                if os.path.exists(frame_output_dir):
                     try:
-                        os.remove(frame_file)
+                        if not os.listdir(frame_output_dir):
+                            os.rmdir(frame_output_dir)
                     except:
                         pass
-                
-                # Remove frame directory if empty
-                try:
-                    os.rmdir(frame_output_dir)
-                except:
-                    pass
                     
             else:
                 print(f"FFmpeg error: {result.stderr}")
@@ -2647,18 +2857,31 @@ class BPL_OT_apply_blast_settings(Operator):
                 file_name = os.path.splitext(file_name)[0]
             scene.render.filepath = os.path.join(output_dir, file_name)
             
-            # Set file format
-            scene.render.image_settings.file_format = 'FFMPEG'
-            scene.render.ffmpeg.format = props.video_format
-            scene.render.ffmpeg.codec = props.video_codec
-            scene.render.ffmpeg.constant_rate_factor = get_ffmpeg_quality(props.video_quality)
+            # Set file format (Blender 5.0 compatible)
+            video_format_set = set_video_file_format(scene)
+            if not video_format_set and hasattr(scene.render, 'ffmpeg'):
+                # Still try to configure ffmpeg even if file_format couldn't be set
+                # This might work in some Blender 5.0 configurations
+                self.report({'WARNING'}, "Could not set video file_format. Attempting to proceed with ffmpeg settings...")
+            elif not video_format_set:
+                self.report({'ERROR'}, "Video rendering not supported in this Blender version.")
+                return {'CANCELLED'}
             
-            # Audio settings
-            if props.include_audio:
-                scene.render.ffmpeg.audio_codec = props.audio_codec
-                scene.render.ffmpeg.audio_bitrate = props.audio_bitrate
+            # Configure ffmpeg settings (these should still work even if file_format is different)
+            if hasattr(scene.render, 'ffmpeg'):
+                scene.render.ffmpeg.format = props.video_format
+                scene.render.ffmpeg.codec = props.video_codec
+                scene.render.ffmpeg.constant_rate_factor = get_ffmpeg_quality(props.video_quality)
+                
+                # Audio settings
+                if props.include_audio:
+                    scene.render.ffmpeg.audio_codec = props.audio_codec
+                    scene.render.ffmpeg.audio_bitrate = props.audio_bitrate
+                else:
+                    scene.render.ffmpeg.audio_codec = 'NONE'
             else:
-                scene.render.ffmpeg.audio_codec = 'NONE'
+                self.report({'ERROR'}, "FFMPEG settings not available in this Blender version.")
+                return {'CANCELLED'}
             
             # Set frame range if using manual range
             if not props.use_scene_frame_range:
@@ -3303,13 +3526,19 @@ def register():
     bpy.app.handlers.load_post.append(on_load_post)
 
 def unregister():
-    bpy.app.handlers.load_post.remove(on_load_post)
+    # Safely remove handler if it exists
+    if on_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(on_load_post)
+    
     # Unregister property for collapsible properties section
-    del bpy.types.Scene.basedplayblast_show_properties
+    if hasattr(bpy.types.Scene, 'basedplayblast_show_properties'):
+        del bpy.types.Scene.basedplayblast_show_properties
     
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-    del bpy.types.Scene.basedplayblast
+    
+    if hasattr(bpy.types.Scene, 'basedplayblast'):
+        del bpy.types.Scene.basedplayblast
 
 if __name__ == "__main__":
     register()
