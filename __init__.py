@@ -430,6 +430,8 @@ class BPL_OT_create_playblast(Operator):
     _original_cycles_viewport = None
     _use_actual_render = False
     _original_cycles_render = None
+    _max_frame_seen = 0
+    _has_triggered_complete = False
     _needs_video_encode = False  # Flag for Blender 5.0 PNG fallback
     
     def modal(self, context, event):
@@ -540,11 +542,14 @@ class BPL_OT_create_playblast(Operator):
                 # Check if frame has changed since last time
                 if current_frame != self._last_reported_frame:
                     self._last_reported_frame = current_frame
+                    if current_frame > self._max_frame_seen:
+                        self._max_frame_seen = current_frame
                     total_frames = self._frame_end - self._frame_start + 1
                     
                     # Calculate progress based on current frame
                     if current_frame >= self._frame_start:
-                        frame_progress = current_frame - self._frame_start
+                        completed_frames = max(0, self._max_frame_seen - self._frame_start + 1)
+                        frame_progress = min(completed_frames, total_frames)
                         progress = min((frame_progress / total_frames) * 100, 100)
                         
                         # Update properties
@@ -563,45 +568,31 @@ class BPL_OT_create_playblast(Operator):
                         area.tag_redraw()
                 
                 # Check if rendering is complete based on frame count or file existence
+                expected_frames = self._frame_end - self._frame_start + 1
+                frame_range_done = self._max_frame_seen >= self._frame_end
+                file_output_done = False
+                
+                output_path = bpy.path.abspath(context.scene.render.filepath)
                 if getattr(self, '_use_actual_render', False):
-                    # For Cycles frame-based rendering, check if all frames are rendered
-                    output_dir = bpy.path.abspath(context.scene.basedplayblast.output_path)
-                    frame_output_dir = os.path.join(output_dir, "frames")
-                    expected_frames = self._frame_end - self._frame_start + 1
-                    
+                    frame_output_dir = os.path.join(bpy.path.abspath(context.scene.basedplayblast.output_path), "frames")
                     if os.path.exists(frame_output_dir):
                         frame_files = glob.glob(os.path.join(frame_output_dir, "*.png"))
-                        frames_rendered = len(frame_files)
-                        render_complete = frames_rendered >= expected_frames
+                        file_output_done = len(frame_files) >= expected_frames
+                elif getattr(self, '_needs_video_encode', False):
+                    # Check for last PNG file or completed frame count
+                    expected_png = f"{output_path}{expected_frames:04d}.png"
+                    if os.path.exists(expected_png):
+                        file_output_done = True
                     else:
-                        render_complete = False
+                        png_matches = glob.glob(f"{output_path}*.png")
+                        file_output_done = len(png_matches) >= expected_frames
                 else:
-                    # For OpenGL rendering, check if output file exists
                     file_ext = get_file_extension(context.scene.basedplayblast.video_format)
-                    output_path = bpy.path.abspath(context.scene.render.filepath)
-                    full_path = output_path + file_ext
-                    render_complete = os.path.exists(full_path)
+                    file_output_done = os.path.exists(output_path + file_ext)
                 
-                # When playhead loops back to first frame after rendering all frames
-                # or if the rendering is complete, consider it done
-                if (current_frame == self._frame_start and self._last_reported_frame >= self._frame_end) or render_complete:
-                    # If we've seen the last frame or the rendering is complete, consider it done
-                    print(f"Detected playblast completion - Render complete: {render_complete}")
-                    
-                    self._phase = 'COMPLETE'
-                    props.render_progress = 100.0
-                    props.status_message = "Finalizing output..."
-                    
-                    # Force UI redraw
-                    for area in context.screen.areas:
-                        if area.type == 'PROPERTIES':
-                            area.tag_redraw()
-                
-                # Also check direct frame count for completion (look for final frame minus one)
-                elif current_frame >= (self._frame_end - 1):
-                    # Force frame to end+1 to ensure render completion is detected
-                    context.scene.frame_set(self._frame_end)
-                    
+                if not self._has_triggered_complete and (frame_range_done or file_output_done):
+                    print(f"Detected playblast completion - frames complete: {frame_range_done}, files complete: {file_output_done}")
+                    self._has_triggered_complete = True
                     self._phase = 'COMPLETE'
                     props.render_progress = 100.0
                     props.status_message = "Finalizing output..."
@@ -642,6 +633,8 @@ class BPL_OT_create_playblast(Operator):
         self._frame_start = scene.frame_start if props.use_scene_frame_range else props.start_frame
         self._frame_end = scene.frame_end if props.use_scene_frame_range else props.end_frame
         self._current_frame = scene.frame_current
+        self._max_frame_seen = self._frame_start - 1
+        self._has_triggered_complete = False
         
         # Temporarily override Blender's frame range if using manual range
         original_frame_start = scene.frame_start
@@ -1394,6 +1387,8 @@ class BPL_OT_create_playblast(Operator):
         props.is_rendering = False
         props.render_progress = 0.0
         props.status_message = ""
+        self._max_frame_seen = 0
+        self._has_triggered_complete = False
         
         # End progress bar if it's still running
         context.window_manager.progress_end()
