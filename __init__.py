@@ -137,6 +137,10 @@ def ensure_rainys_extensions_repo(_deferred: bool = False) -> None:
         addon_prefs.repo_initialized = True
         changed = True
 
+    if not changed:
+        _log("repository already configured; skipping preference save")
+        return
+
     if changed and hasattr(bpy.ops, "wm") and hasattr(bpy.ops.wm, "save_userpref"):
         try:
             bpy.ops.wm.save_userpref()
