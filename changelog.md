@@ -1,3 +1,11 @@
+# v2.6.0
+    - Added comprehensive audio support (#7)
+        - Audio detection for sequencer strips
+        - Automatic sequencer enablement when audio is included
+        - Audio extraction and encoding for PNG-to-video path
+        - Warning when audio is enabled but no audio strips are found
+        - Support for all audio sources (sequencer strips, scene sound strips)
+
 # v2.5.0
     - Expanded compatibility to Blender 4.2 LTS, 4.5 LTS, and 5.0+ (#8)
     - Fixed blast completion detection (#5)

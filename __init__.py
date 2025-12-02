@@ -104,6 +104,122 @@ def get_ffmpeg_quality(quality_enum):
     }
     return quality_map.get(quality_enum, 'MEDIUM')
 
+# Helper function to detect if audio exists in the scene
+def has_audio_in_scene(scene):
+    """Check if the scene contains any audio sources (sequencer strips or scene sound strips)."""
+    if not scene:
+        return False
+    
+    # Ensure sequencer exists (doesn't need to be visible in UI)
+    if not scene.sequence_editor:
+        # Try to initialize sequencer if it doesn't exist
+        try:
+            scene.sequence_editor_create()
+        except:
+            pass  # Sequencer might already exist or can't be created
+    
+    if not scene.sequence_editor:
+        return False
+    
+    try:
+        seq_editor = scene.sequence_editor
+        
+        # Try to get strips - handle different Blender API versions
+        # Blender 5.0 uses 'strips' and 'strips_all', older versions use 'sequences' and 'sequences_all'
+        strips = None
+        
+        # Method 1: Try strips_all (Blender 5.0+)
+        if hasattr(seq_editor, 'strips_all'):
+            strips_attr = getattr(seq_editor, 'strips_all')
+            if callable(strips_attr):
+                try:
+                    strips = strips_attr()
+                except Exception as e:
+                    print(f"[BasedPlayblast] strips_all() call failed: {e}")
+                    pass
+            else:
+                strips = strips_attr
+        
+        # Method 2: Try strips (Blender 5.0+)
+        if not strips and hasattr(seq_editor, 'strips'):
+            try:
+                strips = getattr(seq_editor, 'strips', None)
+                if strips is not None:
+                    try:
+                        _ = len(strips)  # Test if it's iterable
+                    except:
+                        strips = None
+            except Exception as e:
+                print(f"[BasedPlayblast] strips attribute access failed: {e}")
+                pass
+        
+        # Method 3: Fallback to sequences_all (Blender 4.x and earlier)
+        if not strips and hasattr(seq_editor, 'sequences_all'):
+            seq_attr = getattr(seq_editor, 'sequences_all')
+            if callable(seq_attr):
+                try:
+                    strips = seq_attr()
+                except Exception as e:
+                    print(f"[BasedPlayblast] sequences_all() call failed: {e}")
+                    pass
+            else:
+                strips = seq_attr
+        
+        # Method 4: Fallback to sequences (Blender 4.x and earlier)
+        if not strips and hasattr(seq_editor, 'sequences'):
+            try:
+                strips = getattr(seq_editor, 'sequences', None)
+                if strips is not None:
+                    try:
+                        _ = len(strips)  # Test if it's iterable
+                    except:
+                        strips = None
+            except Exception as e:
+                print(f"[BasedPlayblast] sequences attribute access failed: {e}")
+                pass
+        
+        # Debug: Print what we found
+        if strips is None:
+            print(f"[BasedPlayblast] No strips found. Available attributes: {[attr for attr in dir(seq_editor) if not attr.startswith('_')]}")
+        else:
+            print(f"[BasedPlayblast] Found {len(strips) if hasattr(strips, '__len__') else 'unknown'} strips")
+        
+        # Check for audio strips - be very defensive to avoid crashes
+        if strips:
+            try:
+                # Convert to list to avoid iterator issues
+                strips_list = list(strips) if hasattr(strips, '__iter__') else []
+            except:
+                strips_list = []
+            
+            for strip in strips_list:
+                try:
+                    # Get strip type - try only the safest method to avoid crashes
+                    strip_type = None
+                    
+                    # Method 1: Try type attribute (safest, least likely to crash)
+                    try:
+                        if hasattr(strip, 'type'):
+                            # Use getattr instead of direct access for safety
+                            strip_type = getattr(strip, 'type', None)
+                    except:
+                        pass
+                    
+                    # Only check type, don't access any other properties
+                    if strip_type == 'SOUND':
+                        print(f"[BasedPlayblast] Found audio strip (type: SOUND)")
+                        return True
+                except Exception:
+                    # Silently skip strips that cause errors to avoid crashes
+                    continue
+    except Exception as e:
+        # Print error for debugging
+        print(f"[BasedPlayblast] Error in has_audio_in_scene: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    return False
+
 # Function to get all cameras in the scene for the dropdown
 def get_cameras(self, context) -> list[tuple[str, str, str]]:
     cameras = []
@@ -967,8 +1083,28 @@ class BPL_OT_create_playblast(Operator):
                 
                 # Audio settings
                 if props.include_audio:
-                    scene.render.ffmpeg.audio_codec = props.audio_codec
-                    scene.render.ffmpeg.audio_bitrate = props.audio_bitrate
+                    # Enable sequencer to allow audio rendering
+                    scene.render.use_sequencer = True
+                    
+                    # Check Blender version - in 5.0 we use PNG frames, so audio extraction happens later
+                    from .utils import version as version_utils
+                    is_blender_5 = version_utils.is_version_at_least(5, 0, 0)
+                    
+                    # Check if audio exists in the scene
+                    has_audio = has_audio_in_scene(scene)
+                    
+                    if not has_audio:
+                        # Only show warning if we're in a path where audio would actually be used
+                        # In Blender 5.0 with PNG frames, audio extraction happens in PNG-to-video path
+                        # In Blender 4.x or direct video rendering, audio is used here
+                        if not is_blender_5:
+                            # Blender 4.x: Direct video rendering, audio is used here
+                            self.report({'WARNING'}, "Audio is enabled but no audio strips found in sequencer. Rendering video without audio.")
+                        # In Blender 5.0, we'll check again in the PNG-to-video path
+                        scene.render.ffmpeg.audio_codec = 'NONE'
+                    else:
+                        scene.render.ffmpeg.audio_codec = props.audio_codec
+                        scene.render.ffmpeg.audio_bitrate = props.audio_bitrate
                 else:
                     scene.render.ffmpeg.audio_codec = 'NONE'
             else:
@@ -1354,17 +1490,282 @@ class BPL_OT_create_playblast(Operator):
             }
             crf_value = crf_map.get(props.video_quality, '20')
             
+            # Build FFmpeg command with proper structure:
+            # 1. All inputs first (video, then audio if present)
+            # 2. Then all encoding options
             ffmpeg_cmd = [
                 "ffmpeg", "-y",  # Overwrite output file
                 "-framerate", str(framerate),
                 "-i", frame_pattern,
-                "-c:v", video_codec,
-                "-pix_fmt", "yuv420p",
-                "-crf", crf_value,
             ]
             
             # Add audio if enabled
+            audio_file = None
+            has_audio_check = has_audio_in_scene(scene)
+            print(f"[BasedPlayblast] Audio check: include_audio={props.include_audio}, audio_codec={props.audio_codec}, has_audio={has_audio_check}")
             if props.include_audio and props.audio_codec != 'NONE':
+                # Extract audio from sequencer using Blender's sequencer rendering
+                # Create temporary audio file path
+                temp_audio_dir = tempfile.gettempdir()
+                temp_audio_base = f"playblast_audio_{int(time.time())}"
+                temp_audio_path = os.path.join(temp_audio_dir, temp_audio_base)
+                
+                # Store original render settings
+                original_audio_codec = scene.render.ffmpeg.audio_codec
+                original_audio_bitrate = scene.render.ffmpeg.audio_bitrate
+                original_use_sequencer = scene.render.use_sequencer
+                original_filepath = scene.render.filepath
+                original_file_format = scene.render.image_settings.file_format
+                original_format = scene.render.ffmpeg.format
+                original_codec = scene.render.ffmpeg.codec
+                
+                try:
+                    # Ensure sequencer is initialized (doesn't need to be visible in UI)
+                    if not scene.sequence_editor:
+                        # Try to initialize sequencer if it doesn't exist
+                        try:
+                            scene.sequence_editor_create()
+                        except:
+                            pass  # Sequencer might already exist or can't be created
+                    
+                    # Only proceed if sequencer exists and has audio
+                    has_audio = has_audio_in_scene(scene)
+                    print(f"[BasedPlayblast] Audio extraction: sequencer={scene.sequence_editor is not None}, has_audio={has_audio}")
+                    if not scene.sequence_editor or not has_audio:
+                        print("[BasedPlayblast] No sequencer or no audio strips found, skipping audio extraction")
+                        audio_file = None
+                    else:
+                        # Configure for audio extraction
+                        # Store all original settings
+                        original_frame_start = scene.frame_start
+                        original_frame_end = scene.frame_end
+                        original_use_sequencer = scene.render.use_sequencer
+                        original_filepath = scene.render.filepath
+                        original_file_format = scene.render.image_settings.file_format
+                        original_ffmpeg_format = scene.render.ffmpeg.format
+                        original_ffmpeg_codec = scene.render.ffmpeg.codec
+                        original_ffmpeg_audio_codec = scene.render.ffmpeg.audio_codec
+                        original_ffmpeg_audio_bitrate = scene.render.ffmpeg.audio_bitrate
+                        
+                        # Set frame range to match the playblast
+                        scene.frame_start = self._frame_start
+                        scene.frame_end = self._frame_end
+                        
+                        # Configure render settings for audio extraction
+                        scene.render.use_sequencer = True
+                        scene.render.filepath = temp_audio_path
+                        
+                        # For Blender 5.0, we need to use a workaround since FFMPEG format was removed
+                        # We'll use Blender's sequencer audio export if available, or skip audio extraction
+                        from .utils import version as version_utils
+                        is_blender_5 = version_utils.is_version_at_least(5, 0, 0)
+                        
+                        if is_blender_5:
+                            # Blender 5.0: Extract audio using sequencer audio export
+                            # We're in convert_frames_to_video() which runs AFTER frame rendering,
+                            # so it's safe to extract audio here
+                            try:
+                                temp_audio_wav = temp_audio_path + ".wav"
+                                audio_extracted = False
+                                
+                                # Method 1: Try using sound.mixdown() if available (Blender 5.0+)
+                                if hasattr(bpy.ops, 'sound') and hasattr(bpy.ops.sound, 'mixdown'):
+                                    try:
+                                        print("[BasedPlayblast] Attempting audio extraction using sound.mixdown()...")
+                                        # Set frame range for mixdown
+                                        scene.frame_start = self._frame_start
+                                        scene.frame_end = self._frame_end
+                                        
+                                        # Call mixdown operator
+                                        bpy.ops.sound.mixdown(
+                                            filepath=temp_audio_wav,
+                                            check_existing=False
+                                        )
+                                        
+                                        if os.path.exists(temp_audio_wav):
+                                            audio_file = temp_audio_wav
+                                            audio_extracted = True
+                                            print(f"[BasedPlayblast] Successfully extracted audio using mixdown: {audio_file}")
+                                        else:
+                                            print("[BasedPlayblast] Mixdown completed but output file not found")
+                                    except Exception as mixdown_error:
+                                        print(f"[BasedPlayblast] Mixdown operator failed: {mixdown_error}")
+                                        import traceback
+                                        traceback.print_exc()
+                                
+                                # Method 2: If mixdown didn't work or doesn't exist, try using sequencer export
+                                if not audio_extracted:
+                                    print("[BasedPlayblast] Trying sequencer-based audio extraction...")
+                                    # Access sequencer audio strips and use FFmpeg to extract
+                                    # This is a fallback method that should work if mixdown doesn't
+                                    try:
+                                        seq_editor = scene.sequence_editor
+                                        if seq_editor:
+                                            # Get audio strips
+                                            strips = None
+                                            if hasattr(seq_editor, 'strips_all'):
+                                                strips_attr = getattr(seq_editor, 'strips_all')
+                                                if callable(strips_attr):
+                                                    strips = strips_attr()
+                                                else:
+                                                    strips = strips_attr
+                                            elif hasattr(seq_editor, 'strips'):
+                                                strips = getattr(seq_editor, 'strips', None)
+                                            elif hasattr(seq_editor, 'sequences_all'):
+                                                seq_attr = getattr(seq_editor, 'sequences_all')
+                                                if callable(seq_attr):
+                                                    strips = seq_attr()
+                                                else:
+                                                    strips = seq_attr
+                                            elif hasattr(seq_editor, 'sequences'):
+                                                strips = getattr(seq_editor, 'sequences', None)
+                                            
+                                            if strips:
+                                                # Find first audio strip to get the audio file path
+                                                audio_strip = None
+                                                for strip in strips:
+                                                    try:
+                                                        strip_type = getattr(strip, 'type', None)
+                                                        if strip_type == 'SOUND':
+                                                            audio_strip = strip
+                                                            break
+                                                    except:
+                                                        continue
+                                                
+                                                if audio_strip:
+                                                    # Try to get the sound file path from the strip
+                                                    sound_file = getattr(audio_strip, 'sound', None)
+                                                    if sound_file:
+                                                        sound_path = bpy.path.abspath(sound_file.filepath)
+                                                        if os.path.exists(sound_path):
+                                                            # Extract the relevant portion using FFmpeg
+                                                            # Calculate frame range in seconds
+                                                            fps = scene.render.fps / scene.render.fps_base
+                                                            start_time = (self._frame_start - audio_strip.frame_start) / fps
+                                                            duration = (self._frame_end - self._frame_start + 1) / fps
+                                                            
+                                                            ffmpeg_extract_cmd = [
+                                                                "ffmpeg", "-y",
+                                                                "-i", sound_path,
+                                                                "-ss", str(max(0, start_time)),
+                                                                "-t", str(duration),
+                                                                "-acodec", "pcm_s16le",
+                                                                "-ar", "44100",
+                                                                "-ac", "2",
+                                                                temp_audio_wav
+                                                            ]
+                                                            
+                                                            extract_result = subprocess.run(ffmpeg_extract_cmd, capture_output=True, text=True)
+                                                            
+                                                            if extract_result.returncode == 0 and os.path.exists(temp_audio_wav):
+                                                                audio_file = temp_audio_wav
+                                                                audio_extracted = True
+                                                                print(f"[BasedPlayblast] Successfully extracted audio from strip: {audio_file}")
+                                                            else:
+                                                                print(f"[BasedPlayblast] FFmpeg extraction from strip failed: {extract_result.stderr}")
+                                    except Exception as strip_error:
+                                        print(f"[BasedPlayblast] Sequencer strip extraction failed: {strip_error}")
+                                        import traceback
+                                        traceback.print_exc()
+                                
+                                if not audio_extracted:
+                                    print("[BasedPlayblast] Blender 5.0: Could not extract audio using any available method.")
+                                    audio_file = None
+                                    
+                            except Exception as e:
+                                print(f"[BasedPlayblast] Blender 5.0 audio extraction error: {e}")
+                                import traceback
+                                traceback.print_exc()
+                                audio_file = None
+                        else:
+                            # Blender 4.x: Can use FFMPEG format directly for audio extraction
+                            scene.render.image_settings.file_format = 'FFMPEG'
+                            scene.render.ffmpeg.format = 'AVI'
+                            scene.render.ffmpeg.codec = 'NONE'  # No video codec needed
+                            scene.render.ffmpeg.audio_codec = 'PCM'  # Use PCM for extraction
+                            scene.render.ffmpeg.audio_bitrate = 1536  # High quality for extraction
+                            
+                            bpy.ops.render.render(animation=True)
+                            
+                            # Find the generated audio file (Blender may add extension)
+                            audio_file_candidates = [
+                                temp_audio_path + ".avi",
+                                temp_audio_path + "_" + str(self._frame_start).zfill(4) + ".avi",
+                                temp_audio_path + ".mp4",
+                                temp_audio_path,
+                            ]
+                            
+                            for candidate in audio_file_candidates:
+                                if os.path.exists(candidate):
+                                    audio_file = candidate
+                                    print(f"[BasedPlayblast] Found audio file: {audio_file}")
+                                    break
+                        
+                        # Restore frame range
+                        scene.frame_start = original_frame_start
+                        scene.frame_end = original_frame_end
+                        
+                        # For Blender 4.x, find the generated audio file (Blender may add extension)
+                        # For Blender 5.0, audio_file should already be set by the extraction code above
+                        if not is_blender_5 and not audio_file:
+                            audio_file_candidates = [
+                                temp_audio_path + ".avi",
+                                temp_audio_path + "_" + str(self._frame_start).zfill(4) + ".avi",
+                                temp_audio_path + ".mp4",  # Sometimes Blender outputs MP4
+                                temp_audio_path,
+                            ]
+                            
+                            for candidate in audio_file_candidates:
+                                if os.path.exists(candidate):
+                                    audio_file = candidate
+                                    print(f"[BasedPlayblast] Found audio file: {audio_file}")
+                                    break
+                        
+                        # Restore all original settings
+                        scene.render.use_sequencer = original_use_sequencer
+                        scene.render.filepath = original_filepath
+                        scene.render.image_settings.file_format = original_file_format
+                        scene.render.ffmpeg.format = original_ffmpeg_format
+                        scene.render.ffmpeg.codec = original_ffmpeg_codec
+                        scene.render.ffmpeg.audio_codec = original_ffmpeg_audio_codec
+                        scene.render.ffmpeg.audio_bitrate = original_ffmpeg_audio_bitrate
+                    
+                except Exception as e:
+                    print(f"[BasedPlayblast] Warning: Could not extract audio: {e}")
+                    audio_file = None
+                    # Restore original settings on error (if they were stored)
+                    try:
+                        scene.render.ffmpeg.audio_codec = original_audio_codec
+                        scene.render.ffmpeg.audio_bitrate = original_audio_bitrate
+                        scene.render.use_sequencer = original_use_sequencer
+                        scene.render.filepath = original_filepath
+                        scene.render.image_settings.file_format = original_file_format
+                        scene.render.ffmpeg.format = original_format
+                        scene.render.ffmpeg.codec = original_codec
+                        if 'original_frame_start' in locals():
+                            scene.frame_start = original_frame_start
+                        if 'original_frame_end' in locals():
+                            scene.frame_end = original_frame_end
+                    except:
+                        pass  # Settings might already be restored
+                
+                # Add audio input to ffmpeg command if extraction was successful
+                if audio_file and os.path.exists(audio_file):
+                    ffmpeg_cmd.extend([
+                        "-i", audio_file,  # Add audio input (all inputs must come before encoding options)
+                    ])
+                else:
+                    self.report({'WARNING'}, "Audio extraction failed. Rendering video without audio.")
+            
+            # Now add all encoding options after all inputs
+            ffmpeg_cmd.extend([
+                "-c:v", video_codec,
+                "-pix_fmt", "yuv420p",
+                "-crf", crf_value,
+            ])
+            
+            # Add audio encoding options if audio was added
+            if audio_file and os.path.exists(audio_file):
                 audio_codec_map = {
                     'AAC': 'aac',
                     'AC3': 'ac3',
@@ -1373,7 +1774,8 @@ class BPL_OT_create_playblast(Operator):
                 audio_codec = audio_codec_map.get(props.audio_codec, 'aac')
                 ffmpeg_cmd.extend([
                     "-c:a", audio_codec,
-                    "-b:a", f"{props.audio_bitrate}k"
+                    "-b:a", f"{props.audio_bitrate}k",
+                    "-shortest"  # Ensure video and audio end together
                 ])
             
             # Add custom ffmpeg args if provided
@@ -1392,6 +1794,14 @@ class BPL_OT_create_playblast(Operator):
             
             if result.returncode == 0:
                 print(f"Video conversion successful: {video_output}")
+                
+                # Clean up temporary audio file if it was created
+                if audio_file and os.path.exists(audio_file):
+                    try:
+                        os.remove(audio_file)
+                        print(f"Removed temporary audio file: {audio_file}")
+                    except Exception as e:
+                        print(f"Could not remove temporary audio file {audio_file}: {e}")
                 
                 # Clean up frame files from the directory where they were found
                 import glob
@@ -1418,6 +1828,13 @@ class BPL_OT_create_playblast(Operator):
                     
             else:
                 print(f"FFmpeg error: {result.stderr}")
+                # Clean up temporary audio file even on failure
+                if audio_file and os.path.exists(audio_file):
+                    try:
+                        os.remove(audio_file)
+                        print(f"Removed temporary audio file: {audio_file}")
+                    except Exception as e:
+                        print(f"Could not remove temporary audio file {audio_file}: {e}")
                 self.report({'ERROR'}, f"Video conversion failed: {result.stderr}")
                 
         except Exception as e:
@@ -2831,8 +3248,18 @@ class BPL_OT_apply_blast_settings(Operator):
                 
                 # Audio settings
                 if props.include_audio:
-                    scene.render.ffmpeg.audio_codec = props.audio_codec
-                    scene.render.ffmpeg.audio_bitrate = props.audio_bitrate
+                    # Enable sequencer to allow audio rendering
+                    scene.render.use_sequencer = True
+                    
+                    # Check if audio exists in the scene
+                    has_audio = has_audio_in_scene(scene)
+                    
+                    if not has_audio:
+                        # Show warning - this is for apply_blast_settings, so it's informational
+                        self.report({'WARNING'}, "Audio is enabled but no audio strips found in sequencer.")
+                    else:
+                        scene.render.ffmpeg.audio_codec = props.audio_codec
+                        scene.render.ffmpeg.audio_bitrate = props.audio_bitrate
                 else:
                     scene.render.ffmpeg.audio_codec = 'NONE'
             else:
