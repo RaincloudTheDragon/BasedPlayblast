@@ -391,6 +391,10 @@ class BPL_OT_create_playblast(Operator):
     _max_frame_seen = 0
     _has_triggered_complete = False
     _needs_video_encode = False  # Flag for Blender 5.0 PNG fallback
+    _render_job_was_running = False
+    _render_job_finished_time = None
+    _render_job_grace = 1.0  # seconds to wait after render stops once frames are done
+    _last_frame_change_time = None
     
     def modal(self, context, event):
         if event.type == 'ESC':
@@ -420,7 +424,6 @@ class BPL_OT_create_playblast(Operator):
                     context.view_layer.update()
                     
                     # Add a brief delay to ensure viewport is ready
-                    import time
                     time.sleep(0.1)
                 
                                 # Start the render - choose between actual render or OpenGL based on engine
@@ -467,6 +470,7 @@ class BPL_OT_create_playblast(Operator):
                     self._last_reported_frame = current_frame
                     if current_frame > self._max_frame_seen:
                         self._max_frame_seen = current_frame
+                    self._last_frame_change_time = time.time()
                     total_frames = self._frame_end - self._frame_start + 1
                     
                     # Calculate progress based on current frame
@@ -513,7 +517,31 @@ class BPL_OT_create_playblast(Operator):
                     file_ext = get_file_extension(context.scene.basedplayblast.video_format)
                     file_output_done = os.path.exists(output_path + file_ext)
                 
-                if not self._has_triggered_complete and (frame_range_done or file_output_done):
+                # Track Blender render job completion so we can tolerate delayed file writes
+                render_job_running = bpy.app.is_job_running("RENDER")
+                if render_job_running:
+                    self._render_job_was_running = True
+                    self._render_job_finished_time = None
+                elif self._render_job_was_running and self._render_job_finished_time is None:
+                    self._render_job_finished_time = time.time()
+                
+                ready_to_finalize = False
+                if frame_range_done and file_output_done:
+                    ready_to_finalize = True
+                elif frame_range_done and self._render_job_finished_time is not None:
+                    if (time.time() - self._render_job_finished_time) >= self._render_job_grace:
+                        ready_to_finalize = True
+                        print("Render job ended; finalizing after grace period without detecting file.")
+                elif file_output_done:
+                    ready_to_finalize = True
+                
+                # Additional safeguard: if we've seen the end frame and no progress change for a moment, finalize
+                if not ready_to_finalize and frame_range_done and self._last_frame_change_time:
+                    if (time.time() - self._last_frame_change_time) >= 1.0:
+                        ready_to_finalize = True
+                        print("Frame progress stalled at end frame; finalizing to prevent hang.")
+                
+                if not self._has_triggered_complete and ready_to_finalize:
                     print(f"Detected playblast completion - frames complete: {frame_range_done}, files complete: {file_output_done}")
                     self._has_triggered_complete = True
                     self._phase = 'COMPLETE'
@@ -558,6 +586,9 @@ class BPL_OT_create_playblast(Operator):
         self._current_frame = scene.frame_current
         self._max_frame_seen = self._frame_start - 1
         self._has_triggered_complete = False
+        self._render_job_was_running = False
+        self._render_job_finished_time = None
+        self._last_frame_change_time = time.time()
         
         # Temporarily override Blender's frame range if using manual range
         original_frame_start = scene.frame_start
