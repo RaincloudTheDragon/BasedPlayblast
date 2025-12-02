@@ -1,5 +1,7 @@
 # v2.5.0
     - Expanded compatibility to Blender 4.2 LTS, 4.5 LTS, and 5.0+ (#8)
+    - Fixed blast completion detection (#5)
+    - Blender 5.0 video format handling changed, use PNG as efficient workaround
 
 # v2.4.0 2025-12-02
     - Added repo bootstrap to ensure Rainy's Extensions Repo is present

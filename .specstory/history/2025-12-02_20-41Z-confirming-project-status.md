@@ -8484,15 +8484,13 @@ _**Agent (model default, mode Agent)**_
 ---
 
 
+Updating the code to use PNG with 0% compression for all Blender versions, since it's fast and lossless:
+
 
 ---
 
-<tool-use data-tool-type="unknown" data-tool-name="read_file">
-<details>
-<summary>Tool use: **read_file**</summary>
-
-Status: **loading**
-
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: E:/BasedPlayblast/utils/compat.py</summary>
 
 </details>
 </tool-use>
@@ -8505,14 +8503,110 @@ Status: **loading**
 
 
 
+
+
 ---
 
-<tool-use data-tool-type="unknown" data-tool-name="search_replace">
-<details>
-<summary>Tool use: **search_replace**</summary>
+<tool-use data-tool-type="write" data-tool-name="search_replace">
 
-Status: **loading**
+<details><summary>Tool use: **search_replace** • Edit file: E:/BasedPlayblast/utils/compat.py</summary>
 
+**Chunk 1**
+Lines added: 3, lines removed: 2
+
+```diff
+@@ -66,6 +66,7 @@
+      format was chosen; False means callers should warn/abort.
+      
+-     In Blender 5.0+, image_settings.file_format no longer includes video formats.
+-     We use JPEG (fast) and rely on filepath extension + FFMPEG settings for OpenGL.
++     - Blender 4.2/4.5: Can set FFMPEG directly for direct video output
++     - Blender 5.0+: image_settings.file_format no longer includes video formats.
++       We use PNG with 0% compression (fast, lossless) and encode frames manually.
+      """
+      if not scene or not getattr(scene, "render", None):
+```
+
+**Chunk 2**
+Lines added: 1, lines removed: 1
+
+```diff
+@@ -76,5 +77,5 @@
+  
+      if not is_blender_5:
+-         # Blender 4.2/4.5: Can set FFMPEG directly
++         # Blender 4.2/4.5: Can set FFMPEG directly for direct video output
+          try:
+              render.image_settings.file_format = "FFMPEG"
+```
+
+**Chunk 3**
+Lines added: 7, lines removed: 25
+
+```diff
+@@ -85,35 +86,17 @@
+  
+      # Blender 5.0+: image_settings.file_format only supports image formats
+-     # The API change removed video formats from this enum to separate image output
+-     # from video encoding. For OpenGL rendering, we have two options:
+-     # 1. Try direct video output (filepath with .mp4 + FFMPEG settings) - may not work
+-     # 2. Use image sequence (JPEG/PNG) + manual encoding - guaranteed to work
+-     
+-     # Try PNG with 0% compression first (fastest PNG option, but still slower than JPEG
+-     # due to larger file sizes affecting disk I/O and FFmpeg encoding)
++     # Use PNG with 0% compression - fast writes, lossless quality, then encode to video
+      if hasattr(render, "ffmpeg"):
+          try:
+              render.image_settings.file_format = "PNG"
+              render.image_settings.compression = 0  # 0% compression = fastest PNG writes
+-             print("[BasedPlayblast] Blender 5.0: Using PNG with 0% compression. "
+-                   "Note: JPEG is typically still faster due to smaller file sizes. "
+-                   "Blender 5.0 removed video formats from image_settings.file_format.")
++             print("[BasedPlayblast] Blender 5.0: Using PNG with 0% compression "
++                   "(fast, lossless quality). Blender 5.0 removed video formats from "
++                   "image_settings.file_format, so we encode frames to video manually.")
+              return True
+-         except Exception:
+-             pass
+-     
+-     # Fallback: JPEG (typically faster overall due to smaller files = faster I/O + encoding)
+-     if hasattr(render, "ffmpeg"):
+-         try:
+-             render.image_settings.file_format = "JPEG"
+-             render.image_settings.quality = 90
+-             print("[BasedPlayblast] Blender 5.0: Using JPEG format (fallback). "
+-                   "Note: Blender 5.0 removed video formats from image_settings.file_format. "
+-                   "We'll try direct video output via filepath+FFMPEG, or encode frames manually.")
+-             return True
+-         except Exception:
+-             pass
++         except Exception as exc:
++             print(f"[BasedPlayblast] PNG with 0% compression failed: {exc}")
+      
+-     # Last resort: PNG with default compression (slowest)
++     # Last resort: PNG with default compression
+      try:
+          render.image_settings.file_format = "PNG"
+```
+
+</details>
+
+</tool-use>
+
+---
+
+
+
+---
+
+
+Updating the comment in the main file to reflect that we always use PNG with 0% compression:
+
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: E:/BasedPlayblast/__init__.py</summary>
 
 </details>
 </tool-use>
@@ -8525,14 +8619,116 @@ Status: **loading**
 
 
 
+
+
 ---
 
-<tool-use data-tool-type="unknown" data-tool-name="read_file">
+<tool-use data-tool-type="write" data-tool-name="search_replace">
+
+<details><summary>Tool use: **search_replace** • Edit file: E:/BasedPlayblast/__init__.py</summary>
+
+**Chunk 1**
+Lines added: 5, lines removed: 5
+
+```diff
+@@ -986,18 +986,18 @@
+              file_name += frame_range_str
+              
+-             # Check if we're using image format (PNG/JPEG) that needs encoding
++             # Check if we're using image format (PNG) that needs encoding
+              # NOTE: In Blender 5.0, image_settings.file_format no longer includes video formats
+              # (FFMPEG, AVI_JPEG, etc.). This was an intentional API change by Blender to separate
+              # image output from video encoding. For OpenGL rendering, we must:
+-             # 1. Use an image format (JPEG for speed, PNG for quality)
++             # 1. Use PNG with 0% compression (fast, lossless quality)
+              # 2. Output individual frame files
+              # 3. Encode frames to video manually using FFmpeg
+-             # This is slower than direct video output but is the only reliable method in 5.0+
++             # This is the only reliable method in 5.0+ and works well with PNG 0% compression
+              current_format = scene.render.image_settings.file_format
+-             is_image_format = current_format in ('PNG', 'JPEG')
++             is_image_format = current_format in ('PNG', 'JPEG')  # Support both for compatibility
+              
+              if is_image_format:
+                  # For image formats, use proper frame numbering pattern (no video extension)
+-                 # Blender will append frame numbers automatically (e.g., file_0001.jpg)
++                 # Blender will append frame numbers automatically (e.g., file_0001.png)
+                  scene.render.filepath = os.path.join(output_dir, file_name + "_")
+                  scene.render.use_file_extension = True  # This enables frame numbering
+```
+
+</details>
+
+</tool-use>
+
+---
+
+
+
+---
+
+
+
+
+
+---
+
+<tool-use data-tool-type="generic" data-tool-name="read_lints">
 <details>
-<summary>Tool use: **read_file**</summary>
+          <summary>Tool use: **read_lints** • Read lints for 2 files</summary>
+      
+Lint paths:
 
-Status: **loading**
+- `utils/compat.py`
+- `__init__.py`
 
+Lint results
+
+
+**No lint errors found**
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+Updated the code to always use PNG with 0% compression for Blender 5.0+. Changes:
+
+1. **Simplified the format selection**: Removed the JPEG fallback; PNG with 0% compression is fast enough and lossless.
+2. **Updated comments**: Reflect that we use PNG with 0% compression specifically.
+
+The code now:
+- **Blender 4.2/4.5**: Uses FFMPEG directly (direct video output)
+- **Blender 5.0+**: Uses PNG with 0% compression (fast, lossless frames → encode to video)
+
+This provides lossless quality while maintaining good performance. The code is simpler and more consistent.
+
+---
+
+_**User (2025-12-02 21:12Z)**_
+
+List the changes we've done today.
+
+---
+
+_**Agent (model default, mode Agent)**_
+
+
+
+---
+
+
+Reviewing the changelog and summarizing today's changes:
+
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: E:/BasedPlayblast/changelog.md</summary>
 
 </details>
 </tool-use>
@@ -8544,16 +8740,17 @@ Status: **loading**
 ---
 
 
+Checking git status to see what changed:
+
 
 ---
 
-<tool-use data-tool-type="unknown" data-tool-name="search_replace">
-<details>
-<summary>Tool use: **search_replace**</summary>
+<tool-use data-tool-type="shell" data-tool-name="run_terminal_cmd">
+<details><summary>Tool use: **run_terminal_cmd** • Run command: git status --short</summary>
 
-Status: **loading**
-
-
+```bash
+git status --short
+```
 </details>
 </tool-use>
 
@@ -8564,26 +8761,59 @@ Status: **loading**
 ---
 
 
+## Summary of Changes Today
 
----
+### 1. Multi-version compatibility (Blender 4.2 LTS, 4.5 LTS, 5.0+)
+- Created `utils/version.py`:
+  - Version detection helpers (`get_blender_version()`, `is_version_at_least()`, etc.)
+  - Version categorization (`get_version_category()`)
+  - Support tracking for 4.2 LTS, 4.5 LTS, and 5.0+
+- Created `utils/compat.py`:
+  - Safe class registration helpers
+  - Compositor node tree access (handles 5.0 rename)
+  - Geometry nodes helpers
+  - Studio lights path resolution
+  - Video file format handling (version-specific)
+  - Viewport OpenGL render invocation (handles region type differences)
+- Updated `__init__.py`:
+  - Replaced direct version checks with `version_utils` and `compat_utils`
+  - Integrated compatibility functions throughout
 
-<tool-use data-tool-type="unknown" data-tool-name="read_lints">
-<details>
-<summary>Tool use: **read_lints**</summary>
+### 2. Fixed issue #5 — playblast completion detection
+- Added `bpy.app.handlers.frame_change_post` to track rendered frames
+- Added `bpy.app.handlers.render_complete` to track render job completion
+- Fixed automatic finalization without manual playhead movement
+- Restored UI interactivity during playblast (removed blocking sleep)
+- Added fallback logic for edge cases
 
-Status: **loading**
+### 3. Blender 5.0 video format handling
+- Discovered: Blender 5.0 removed video formats from `image_settings.file_format` (API change)
+- Solution: Use PNG with 0% compression for Blender 5.0+ (fast, lossless)
+- Updated `set_video_file_format()`:
+  - Blender 4.2/4.5: Direct FFMPEG output
+  - Blender 5.0+: PNG with 0% compression → manual FFmpeg encoding
+- Updated frame detection and cleanup to handle PNG files
 
+### 4. Performance optimizations
+- Switched to PNG with 0% compression (faster than compressed PNG)
+- Removed JPEG fallback (PNG 0% is fast enough and lossless)
+- Updated comments and documentation
 
-</details>
-</tool-use>
+### 5. Documentation updates
+- Updated `blender_manifest.toml`: `blender_version_min = "4.2.0"`, `version = "2.5.0"`
+- Updated `README.md`: Compatibility requirements
+- Updated `changelog.md`: Added v2.5.0 entry
 
----
+### Files modified
+- `utils/__init__.py` (created)
+- `utils/version.py` (created)
+- `utils/compat.py` (created)
+- `__init__.py` (major refactor)
+- `blender_manifest.toml` (updated)
+- `README.md` (updated)
+- `changelog.md` (updated)
 
-
-
----
-
-
+All changes maintain backward compatibility with Blender 4.2 LTS and 4.5 LTS while adding support for 5.0+.
 
 ---
 
