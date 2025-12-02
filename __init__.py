@@ -554,16 +554,23 @@ class BPL_OT_create_playblast(Operator):
                 if getattr(self, '_use_actual_render', False):
                     frame_output_dir = os.path.join(bpy.path.abspath(context.scene.basedplayblast.output_path), "frames")
                     if os.path.exists(frame_output_dir):
-                        frame_files = glob.glob(os.path.join(frame_output_dir, "*.png"))
+                        # Check for both PNG and JPEG files
+                        frame_files = (glob.glob(os.path.join(frame_output_dir, "*.png")) + 
+                                     glob.glob(os.path.join(frame_output_dir, "*.jpg")) +
+                                     glob.glob(os.path.join(frame_output_dir, "*.jpeg")))
                         file_output_done = len(frame_files) >= expected_frames
                 elif getattr(self, '_needs_video_encode', False):
-                    # Check for last PNG file or completed frame count
-                    expected_png = f"{output_path}{expected_frames:04d}.png"
-                    if os.path.exists(expected_png):
+                    # Check for last frame file (PNG or JPEG) or completed frame count
+                    # Determine extension from current render settings
+                    current_format = context.scene.render.image_settings.file_format
+                    frame_ext = ".jpg" if current_format == "JPEG" else ".png"
+                    expected_frame = f"{output_path}{expected_frames:04d}{frame_ext}"
+                    if os.path.exists(expected_frame):
                         file_output_done = True
                     else:
-                        png_matches = glob.glob(f"{output_path}*.png")
-                        file_output_done = len(png_matches) >= expected_frames
+                        # Check both PNG and JPEG files
+                        frame_matches = glob.glob(f"{output_path}*.png") + glob.glob(f"{output_path}*.jpg") + glob.glob(f"{output_path}*.jpeg")
+                        file_output_done = len(frame_matches) >= expected_frames
                 else:
                     file_ext = get_file_extension(context.scene.basedplayblast.video_format)
                     file_output_done = os.path.exists(output_path + file_ext)
@@ -978,12 +985,20 @@ class BPL_OT_create_playblast(Operator):
             frame_range_str = f"_{self._frame_start}-{self._frame_end}"
             file_name += frame_range_str
             
-            # Check if we're using PNG format (Blender 5.0 fallback)
-            is_png_format = scene.render.image_settings.file_format == 'PNG'
+            # Check if we're using image format (PNG) that needs encoding
+            # NOTE: In Blender 5.0, image_settings.file_format no longer includes video formats
+            # (FFMPEG, AVI_JPEG, etc.). This was an intentional API change by Blender to separate
+            # image output from video encoding. For OpenGL rendering, we must:
+            # 1. Use PNG with 0% compression (fast, lossless quality)
+            # 2. Output individual frame files
+            # 3. Encode frames to video manually using FFmpeg
+            # This is the only reliable method in 5.0+ and works well with PNG 0% compression
+            current_format = scene.render.image_settings.file_format
+            is_image_format = current_format in ('PNG', 'JPEG')  # Support both for compatibility
             
-            if is_png_format:
-                # For PNG format, use proper frame numbering pattern (no video extension)
-                # Blender will append frame numbers automatically
+            if is_image_format:
+                # For image formats, use proper frame numbering pattern (no video extension)
+                # Blender will append frame numbers automatically (e.g., file_0001.png)
                 scene.render.filepath = os.path.join(output_dir, file_name + "_")
                 scene.render.use_file_extension = True  # This enables frame numbering
                 scene.render.use_overwrite = True
@@ -1215,7 +1230,7 @@ class BPL_OT_create_playblast(Operator):
         self.cleanup(context)
     
     def convert_frames_to_video(self, context):
-        """Convert individual PNG frames to video using FFmpeg"""
+        """Convert individual frame files (PNG/JPEG) to video using FFmpeg"""
         scene = context.scene
         props = scene.basedplayblast
         
@@ -1237,16 +1252,22 @@ class BPL_OT_create_playblast(Operator):
             video_output = os.path.join(output_dir, file_name + video_ext)
             
             # Frame pattern for FFmpeg - check both possible locations and patterns
-            # Pattern 1: Files in output_dir with format "filename_0001.png"
-            frame_pattern1 = os.path.join(output_dir, file_name + "_%04d.png")
+            # Support both PNG and JPEG (JPEG used in Blender 5.0 for faster encoding)
+            import glob
+            
+            # Determine file extension from current render settings
+            current_format = scene.render.image_settings.file_format
+            frame_ext = ".jpg" if current_format == "JPEG" else ".png"
+            
+            # Pattern 1: Files in output_dir with format "filename_0001.{ext}"
+            frame_pattern1 = os.path.join(output_dir, file_name + "_%04d" + frame_ext)
             # Pattern 2: Files in frames subdirectory
             frame_output_dir = os.path.join(output_dir, "frames")
-            frame_pattern2 = os.path.join(frame_output_dir, file_name + "_%04d.png")
+            frame_pattern2 = os.path.join(frame_output_dir, file_name + "_%04d" + frame_ext)
             # Pattern 3: Files with .mp4 in name (Blender 5.0 issue - wrong extension in path)
-            frame_pattern3 = os.path.join(output_dir, file_name + ".mp4%04d.png")
+            frame_pattern3 = os.path.join(output_dir, file_name + ".mp4%04d" + frame_ext)
             
             # Try to find which pattern matches actual files
-            import glob
             test_patterns = [
                 (frame_pattern1, output_dir),
                 (frame_pattern2, frame_output_dir),
@@ -1265,34 +1286,47 @@ class BPL_OT_create_playblast(Operator):
                     break
             
             if not frame_pattern:
-                # Fallback: search for any PNG files with the base filename (handle various patterns)
-                # Try pattern with .mp4 in name first (Blender 5.0 issue)
-                all_pngs = glob.glob(os.path.join(output_dir, file_name + ".mp4*.png"))
-                if not all_pngs:
+                # Fallback: search for any frame files (PNG or JPEG) with the base filename
+                # Try both extensions
+                all_frames = []
+                for ext in [".png", ".jpg", ".jpeg"]:
+                    # Try pattern with .mp4 in name first (Blender 5.0 issue)
+                    frames = glob.glob(os.path.join(output_dir, file_name + ".mp4*" + ext))
+                    if frames:
+                        all_frames = frames
+                        frame_ext = ext
+                        break
                     # Try standard pattern
-                    all_pngs = glob.glob(os.path.join(output_dir, file_name + "_*.png"))
-                if not all_pngs:
-                    # Try any PNG files starting with filename
-                    all_pngs = glob.glob(os.path.join(output_dir, file_name + "*.png"))
+                    frames = glob.glob(os.path.join(output_dir, file_name + "_*" + ext))
+                    if frames:
+                        all_frames = frames
+                        frame_ext = ext
+                        break
+                    # Try any files starting with filename
+                    frames = glob.glob(os.path.join(output_dir, file_name + "*" + ext))
+                    if frames:
+                        all_frames = frames
+                        frame_ext = ext
+                        break
                 
-                if all_pngs:
+                if all_frames:
                     # Sort files to find the pattern
-                    all_pngs.sort()
+                    all_frames.sort()
                     # Try to determine the pattern from the first file
-                    first_file = os.path.basename(all_pngs[0])
+                    first_file = os.path.basename(all_frames[0])
                     if ".mp4" in first_file:
-                        # Handle .mp4####.png pattern
-                        frame_pattern = os.path.join(output_dir, file_name + ".mp4%04d.png")
+                        # Handle .mp4####.{ext} pattern
+                        frame_pattern = os.path.join(output_dir, file_name + ".mp4%04d" + frame_ext)
                     elif "_" in first_file:
-                        # Handle _####.png pattern
-                        frame_pattern = os.path.join(output_dir, file_name + "_%04d.png")
+                        # Handle _####.{ext} pattern
+                        frame_pattern = os.path.join(output_dir, file_name + "_%04d" + frame_ext)
                     else:
                         # Generic pattern
-                        frame_pattern = os.path.join(output_dir, file_name + "%04d.png")
+                        frame_pattern = os.path.join(output_dir, file_name + "%04d" + frame_ext)
                     frame_dir = output_dir
                     print(f"Using detected pattern from files: {frame_pattern}")
                 else:
-                    self.report({'ERROR'}, f"No PNG frame files found to convert. Searched in: {output_dir}")
+                    self.report({'ERROR'}, f"No frame files (PNG/JPEG) found to convert. Searched in: {output_dir}")
                     return
             
             # Build FFmpeg command using configured settings
@@ -1362,7 +1396,10 @@ class BPL_OT_create_playblast(Operator):
                 # Clean up frame files from the directory where they were found
                 import glob
                 if frame_dir:
-                    frame_files = glob.glob(os.path.join(frame_dir, file_name + "*.png"))
+                    # Remove both PNG and JPEG frame files
+                    frame_files = (glob.glob(os.path.join(frame_dir, file_name + "*.png")) +
+                                  glob.glob(os.path.join(frame_dir, file_name + "*.jpg")) +
+                                  glob.glob(os.path.join(frame_dir, file_name + "*.jpeg")))
                     for frame_file in frame_files:
                         try:
                             os.remove(frame_file)

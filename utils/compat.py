@@ -64,6 +64,10 @@ def set_video_file_format(scene) -> bool:
     """
     Force Blender onto a video-friendly output. Returns True if a usable
     format was chosen; False means callers should warn/abort.
+    
+    - Blender 4.2/4.5: Can set FFMPEG directly for direct video output
+    - Blender 5.0+: image_settings.file_format no longer includes video formats.
+      We use PNG with 0% compression (fast, lossless) and encode frames manually.
     """
     if not scene or not getattr(scene, "render", None):
         return False
@@ -72,6 +76,7 @@ def set_video_file_format(scene) -> bool:
     is_blender_5 = version.is_version_at_least(5, 0, 0)
 
     if not is_blender_5:
+        # Blender 4.2/4.5: Can set FFMPEG directly for direct video output
         try:
             render.image_settings.file_format = "FFMPEG"
             return True
@@ -79,19 +84,23 @@ def set_video_file_format(scene) -> bool:
             print(f"[BasedPlayblast] FFMPEG set failed: {exc}")
             return False
 
-    candidates = ["AVI_JPEG", "AVI_RAW", "H264", "THEORA", "XVID", "FFMPEG"]
-    for fmt in candidates:
+    # Blender 5.0+: image_settings.file_format only supports image formats
+    # Use PNG with 0% compression - fast writes, lossless quality, then encode to video
+    if hasattr(render, "ffmpeg"):
         try:
-            render.image_settings.file_format = fmt
-            print(f"[BasedPlayblast] video format -> {fmt}")
+            render.image_settings.file_format = "PNG"
+            render.image_settings.compression = 0  # 0% compression = fastest PNG writes
+            print("[BasedPlayblast] Blender 5.0: Using PNG with 0% compression "
+                  "(fast, lossless quality). Blender 5.0 removed video formats from "
+                  "image_settings.file_format, so we encode frames to video manually.")
             return True
-        except Exception:
-            continue
-
-    # Last resort: PNG series with manual encode step
+        except Exception as exc:
+            print(f"[BasedPlayblast] PNG with 0% compression failed: {exc}")
+    
+    # Last resort: PNG with default compression
     try:
         render.image_settings.file_format = "PNG"
-        print("[BasedPlayblast] video fallback -> PNG sequence")
+        print("[BasedPlayblast] video fallback -> PNG sequence (will encode manually)")
         return False
     except Exception as exc:
         print(f"[BasedPlayblast] PNG fallback failed: {exc}")
