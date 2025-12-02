@@ -32,7 +32,7 @@ jobs:
           mkdir -p addon_files/BasedPlayblast
           
           # Copy the required files for Blender Extensions
-          cp __init__.py README.md blender_manifest.toml addon_files/BasedPlayblast/
+          cp __init__.py rainys_repo_bootstrap.py README.md blender_manifest.toml addon_files/BasedPlayblast/
           
           # Include other necessary files if they exist
           if [ -f "requirements.txt" ]; then

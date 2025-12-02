@@ -4003,3 +4003,20 @@ Tested via `read_lints` on both files; no issues detected.
 
 ---
 
+_**User (2025-12-02 17:48Z)**_
+
+@blender (1009-1028) looks good. will we need to integrate this into the github workflow yml? 
+
+---
+
+_**Agent (model gpt-5.1-codex, mode Agent)**_
+
+<think><details><summary>Thought Process</summary>
+**Seeking an answer**</details></think>
+
+---
+
+No GitHub workflow changes are needed for the helper itself—the repo bootstrap runs entirely inside Blender when the add-on loads. Our existing packaging/build steps already include every `.py` in the repo, so adding `rainys_repo_bootstrap.py` doesn’t require new CI logic. You’d only touch your workflow YAML if you plan to auto-test this helper in headless Blender jobs (e.g., spinning up Blender, ensuring the repo gets added). If you aren’t adding such tests right now, the current workflow can stay as-is.
+
+---
+
