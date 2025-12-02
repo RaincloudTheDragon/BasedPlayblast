@@ -9,6 +9,7 @@ from bpy.types import (Panel, Operator, PropertyGroup, AddonPreferences)  # type
 import time
 
 from .rainys_repo_bootstrap import ensure_rainys_extensions_repo
+from .utils import compat as compat_utils
 
 # Pre-defined items lists for EnumProperties
 RESOLUTION_MODE_ITEMS = [
@@ -101,51 +102,6 @@ def get_ffmpeg_quality(quality_enum):
         'LOSSLESS': 'LOSSLESS',
     }
     return quality_map.get(quality_enum, 'MEDIUM')
-
-# Helper function to safely set video file format (Blender 5.0 compatibility)
-def set_video_file_format(scene):
-    """Set file format for video output, handling Blender 5.0 API changes."""
-    # Check Blender version - 5.0+ may have different API
-    blender_version = bpy.app.version
-    is_blender_5 = blender_version[0] >= 5
-    
-    if is_blender_5:
-        # In Blender 5.0+, FFMPEG is not in image_settings.file_format enum
-        # Try alternative video formats that might be available
-        # Order matters - try most compatible formats first
-        video_formats = ['AVI_JPEG', 'AVI_RAW', 'H264', 'THEORA', 'XVID', 'FFMPEG']
-        for fmt in video_formats:
-            try:
-                scene.render.image_settings.file_format = fmt
-                print(f"Set video format to: {fmt} (Blender 5.0 compatibility mode)")
-                return True
-            except (TypeError, ValueError, AttributeError) as e:
-                # Continue trying other formats
-                continue
-        
-        # If no video format works, check if we can still use ffmpeg settings
-        # In some Blender versions, ffmpeg might work even without setting file_format
-        if hasattr(scene.render, 'ffmpeg'):
-            print("Warning: Could not set video file_format, but ffmpeg settings are available.")
-            print("Attempting to proceed with ffmpeg configuration...")
-            # Set to a valid image format as fallback
-            try:
-                scene.render.image_settings.file_format = 'PNG'
-                # Note: This might not work for direct video output
-                # User may need to render as image sequence and encode separately
-                return False
-            except:
-                pass
-        
-        return False
-    else:
-        # For Blender < 5.0, use FFMPEG as before
-        try:
-            scene.render.image_settings.file_format = 'FFMPEG'
-            return True
-        except (TypeError, ValueError) as e:
-            print(f"Warning: Could not set FFMPEG format: {e}")
-            return False
 
 # Function to get all cameras in the scene for the dropdown
 def get_cameras(self, context) -> list[tuple[str, str, str]]:
@@ -481,10 +437,6 @@ class BPL_OT_create_playblast(Operator):
                     bpy.ops.render.render('INVOKE_DEFAULT', animation=True)
                 else:
                     # Use OpenGL viewport rendering for other engines
-                    # Check Blender version for compatibility
-                    blender_version = bpy.app.version
-                    is_blender_5 = blender_version[0] >= 5
-                    
                     print(f"Starting OpenGL render with:")
                     print(f"  - Area: {self._area.type if self._area else 'None'}")
                     print(f"  - Shading: {self._space.shading.type if self._space else 'None'}")
@@ -492,38 +444,7 @@ class BPL_OT_create_playblast(Operator):
                     print(f"  - Scene camera: {context.scene.camera.name if context.scene.camera else 'None'}")
                     
                     try:
-                        # In Blender 5.0+, use simpler context override or no override
-                        if is_blender_5 and self._area:
-                            # Try to get a valid region
-                            regions = [r for r in self._area.regions if r.type == 'WINDOW']
-                            if regions:
-                                override = context.copy()
-                                override["area"] = self._area
-                                override["region"] = regions[0]
-                                
-                                # In Blender 5.0, view_context parameter might not be needed or might cause issues
-                                # Try without it first, then with it if needed
-                                try:
-                                    with context.temp_override(**override):
-                                        bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True, sequencer=False, write_still=False)
-                                except TypeError:
-                                    # If that fails, try with view_context=False
-                                    with context.temp_override(**override):
-                                        bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True, sequencer=False, write_still=False, view_context=False)
-                            else:
-                                # No valid region, try without override
-                                bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True, sequencer=False, write_still=False)
-                        elif self._area:
-                            # Blender < 5.0, use original approach
-                            override = context.copy()
-                            override["area"] = self._area
-                            override["region"] = [r for r in self._area.regions if r.type == 'WINDOW'][0]
-                            
-                            with context.temp_override(**override):
-                                bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True, sequencer=False, write_still=False, view_context=True)
-                        else:
-                            # No area available, use simple call
-                            bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True, sequencer=False, write_still=False)
+                        compat_utils.viewport_opengl_render(context, self._area, self._region_3d)
                     except Exception as e:
                         print(f"Error during OpenGL render: {e}")
                         self.report({'ERROR'}, f"Render failed: {str(e)}")
@@ -938,8 +859,8 @@ class BPL_OT_create_playblast(Operator):
             output_dir = bpy.path.abspath(props.output_path)
             os.makedirs(output_dir, exist_ok=True)
             
-            # Set file format first (Blender 5.0 compatible)
-            video_format_set = set_video_file_format(scene)
+            # Set file format via compat helper (handles 4.4-5.0+)
+            video_format_set = compat_utils.set_video_file_format(scene)
             if not video_format_set and hasattr(scene.render, 'ffmpeg'):
                 # Still try to configure ffmpeg even if file_format couldn't be set
                 # This might work in some Blender 5.0 configurations
@@ -2489,102 +2410,17 @@ class BPL_OT_apply_blast_settings(Operator):
                             
                             print(f"Temporarily disabled light: {obj.name}")
                     
-                    # Get path to Blender installation and construct studio lights path
-                    # Make sure modules are available for this section
-                    import os
-                    import sys
-                    
-                    # Get the Blender executable path
                     blender_exe = bpy.app.binary_path
-                    blender_dir = os.path.dirname(blender_exe)
+                    studio_lights_dir = compat_utils.find_first_existing_path(
+                        compat_utils.iter_studio_light_dirs(blender_exe)
+                    )
+                    if studio_lights_dir:
+                        print(f"Found studio lights directory: {studio_lights_dir}")
+                    else:
+                        print("Could not find studio lights directory, will fall back to defaults")
                     
-                    # Construct path to studio lights directory
-                    # Note: This may vary based on Blender installation but should work for most setups
-                    studio_lights_dir = os.path.join(blender_dir, "datafiles", "studiolights", "world")
-                    
-                    # Additional paths for different Blender installations (specifically for Blender 4.4)
-                    possible_paths = [
-                        # Standard path
-                        studio_lights_dir,
-                        # Blender 4.4 specific path structure with extra version directory
-                        os.path.join(blender_dir, "4.4", "datafiles", "studiolights", "world"),
-                        # Other possible locations
-                        os.path.join(blender_dir, "..", "datafiles", "studiolights", "world"),
-                        os.path.join(blender_dir, "..", "..", "datafiles", "studiolights", "world"),
-                        os.path.join(blender_dir, "..", "4.4", "datafiles", "studiolights", "world"),
-                        os.path.join(os.path.dirname(os.path.dirname(blender_exe)), "4.4", "datafiles", "studiolights", "world"),
-                        # Version-specific paths for various Blender installations
-                        os.path.join(os.path.dirname(blender_dir), "4.4", "datafiles", "studiolights", "world")
-                    ]
-                    
-                    # Get Blender's version and construct a version-specific path
-                    blender_version = bpy.app.version
-                    version_str = f"{blender_version[0]}.{blender_version[1]}"
-                    possible_paths.append(os.path.join(blender_dir, version_str, "datafiles", "studiolights", "world"))
-                    possible_paths.append(os.path.join(os.path.dirname(blender_dir), version_str, "datafiles", "studiolights", "world"))
-                    
-                    # Specific path for this user's installation
-                    possible_paths.append(r"C:\Program Files\Blender Foundation\Blender 4.4\4.4\datafiles\studiolights\world")
-                    
-                    # Try to find the studio lights directory
-                    studio_lights_dir = None
-                    for path in possible_paths:
-                        if os.path.exists(path):
-                            print(f"Found studio lights directory: {path}")
-                            studio_lights_dir = path
-                            break
-                    
-                    if not studio_lights_dir:
-                        print("Could not find studio lights directory, using fallback")
-                        studio_lights_dir = possible_paths[0]  # Use the first path as fallback
-                    
-                    # Find the specific HDRI to use - these are common in Blender 4.4
-                    common_hdri_files = [
-                        "forest.exr",      # Forest environment - good general lighting (preferred)
-                        "studio.exr",      # Clean studio environment
-                        "city.exr",        # Urban environment
-                        "courtyard.exr",   # Outdoor courtyard
-                        "night.exr",       # Night environment
-                        "sunrise.exr",     # Sunrise lighting
-                        "sunset.exr",      # Sunset lighting
-                    ]
-                    
-                    # Try to find an existing HDRI file
-                    hdri_path = None
-                    for hdri_filename in common_hdri_files:
-                        path = os.path.join(studio_lights_dir, hdri_filename)
-                        if os.path.exists(path):
-                            hdri_path = path
-                            print(f"Found HDRI file: {hdri_path}")
-                            break
-                    
-                    # If no common HDRI was found, try any .exr file
-                    if not hdri_path and os.path.exists(studio_lights_dir):
-                        try:
-                            exr_files = [f for f in os.listdir(studio_lights_dir) if f.endswith('.exr')]
-                            if exr_files:
-                                hdri_filename = exr_files[0]
-                                hdri_path = os.path.join(studio_lights_dir, hdri_filename)
-                                print(f"Using alternative HDRI: {hdri_path}")
-                        except Exception as e:
-                            print(f"Error listing studio lights directory: {str(e)}")
-                    
-                    # Hardcoded paths as last resort
-                    if not hdri_path or not os.path.exists(hdri_path):
-                        direct_paths = [
-                            r"C:\Program Files\Blender Foundation\Blender 4.4\4.4\datafiles\studiolights\world\forest.exr",
-                            r"C:\Program Files\Blender Foundation\Blender 4.4\4.4\datafiles\studiolights\world\studio.exr",
-                            # Try both common locations
-                            os.path.join(studio_lights_dir, "forest.exr"),
-                            os.path.join(os.path.dirname(studio_lights_dir), "world", "forest.exr")
-                        ]
-                        for path in direct_paths:
-                            if os.path.exists(path):
-                                hdri_path = path
-                                print(f"Using hardcoded HDRI path: {hdri_path}")
-                                break
-                    
-                    if hdri_path and os.path.exists(hdri_path):
+                    hdri_path = compat_utils.resolve_hdri_path(studio_lights_dir)
+                    if hdri_path:
                         print(f"Using HDRI path: {hdri_path}")
                     else:
                         print("WARNING: Could not find any suitable HDRI file!")
@@ -2854,8 +2690,8 @@ class BPL_OT_apply_blast_settings(Operator):
                 file_name = os.path.splitext(file_name)[0]
             scene.render.filepath = os.path.join(output_dir, file_name)
             
-            # Set file format (Blender 5.0 compatible)
-            video_format_set = set_video_file_format(scene)
+            # Set file format via compat helper
+            video_format_set = compat_utils.set_video_file_format(scene)
             if not video_format_set and hasattr(scene.render, 'ffmpeg'):
                 # Still try to configure ffmpeg even if file_format couldn't be set
                 # This might work in some Blender 5.0 configurations
