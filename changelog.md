@@ -1,5 +1,6 @@
 # v2.4.0 2025-12-02
     - Added repo bootstrap to ensure Rainy's Extensions Repo is present
+    - Minimum version Blender 4.2 LTS for #8 
 
 # v2.3.1
     - Fix version mismatch in manifest.
