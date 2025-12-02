@@ -117,13 +117,16 @@ def viewport_opengl_render(context, area=None, region=None):
                 **({"view_context": True} if not is_blender_5 else {}),
             )
 
-    target_region = None
-    if region:
-        target_region = region
-    elif area:
-        windows = [r for r in area.regions if r.type == "WINDOW"]
-        if windows:
-            target_region = windows[0]
+    def _resolve_region(target_area, candidate_region):
+        if candidate_region and getattr(candidate_region, "type", None) == "WINDOW":
+            return candidate_region
+        if target_area:
+            for reg in target_area.regions:
+                if getattr(reg, "type", None) == "WINDOW":
+                    return reg
+        return None
+
+    target_region = _resolve_region(area, region)
     try:
         if area and target_region:
             override = context.copy()

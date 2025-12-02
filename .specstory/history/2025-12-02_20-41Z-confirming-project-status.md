@@ -3471,3 +3471,154 @@ Got it—that matches the `WinError 5` junction failure earlier. Since the porta
 
 ---
 
+_**User (2025-12-02 21:12Z)**_
+
+@blender (539-567) aha
+
+---
+
+_**Agent (model gpt-5.1-codex, mode Agent)**_
+
+<think><details><summary>Thought Process</summary>
+**Analyzing viewport render issue with Region compatibility**</details></think>
+
+---
+
+Yup—`RegionView3D` isn’t the “window” region Blender expects for `bpy.ops.render.opengl`. We should tweak `compat.viewport_opengl_render` so that when it’s handed a RegionView3D (like `self._region_3d`), it ignores that and still grabs the associated WINDOW region from the area. That way the override always passes a real `bpy.types.Region`, and the OpenGL render won’t throw that error. Let me know if you want me to patch that next.
+
+---
+
+_**User (2025-12-02 21:12Z)**_
+
+Yes, do that for 4.2
+
+---
+
+_**Agent (model gpt-5.1-codex, mode Agent)**_
+
+<think><details><summary>Thought Process</summary>
+**Adjusting viewport region detection logic**</details></think>
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: E:/BasedPlayblast/utils/compat.py</summary>
+
+</details>
+</tool-use>
+
+---
+
+<think><details><summary>Thought Process</summary>
+**Modifying region selection function**</details></think>
+
+---
+
+<tool-use data-tool-type="unknown" data-tool-name="apply_patch">
+<details>
+<summary>Tool use: **apply_patch**</summary>
+
+
+Parameters:
+
+```json
+{
+  "relativeWorkspacePath": "utils/compat.py"
+}
+```
+Additional data:
+
+```json
+{
+  "codeblockId": "4e94de06-6326-47d6-bb16-7839457891c0"
+}
+```
+Result:
+
+```json
+{
+  "diff": {
+    "chunks": [
+      {
+        "diffString": "              )\n  \n-     target_region = None\n-     if region:\n-         target_region = region\n-     elif area:\n-         windows = [r for r in area.regions if r.type == \"WINDOW\"]\n-         if windows:\n-             target_region = windows[0]\n+     def _resolve_region(target_area, candidate_region):\n+         if candidate_region and getattr(candidate_region, \"type\", None) == \"WINDOW\":\n+             return candidate_region\n+         if target_area:\n+             for reg in target_area.regions:\n+                 if getattr(reg, \"type\", None) == \"WINDOW\":\n+                     return reg\n+         return None\n+ \n+     target_region = _resolve_region(area, region)\n      try:\n          if area and target_region:",
+        "oldStart": 118,
+        "newStart": 118,
+        "oldLines": 11,
+        "newLines": 14,
+        "linesRemoved": 7,
+        "linesAdded": 10
+      }
+    ],
+    "editor": "EDITOR_AI"
+  },
+  "shouldAutoFixLints": true,
+  "resultForModel": "Success. Updated the following files:\nM utils/compat.py",
+  "contentsAfterEdit": "\"\"\"\nCompatibility helpers wrapping Blender version-specific logic.\n\nAnything that differs between Blender 4.2 LTS, 4.5 LTS, and 5.0+ should live here\nso the main add-on stays focused on user-facing behavior.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport os\nfrom typing import Iterable, Optional\n\ntry:\n    import bpy  # type: ignore\n    from bpy.utils import register_class, unregister_class  # type: ignore\nexcept ImportError:  # pragma: no cover - for static tooling\n    bpy = None  # type: ignore\n    register_class = unregister_class = lambda cls: None  # type: ignore\n\nfrom . import version\n\n\n# -- Registration helpers --------------------------------------------------\ndef safe_register_class(cls) -&gt; bool:\n    try:\n        register_class(cls)\n        return True\n    except Exception as exc:  # pragma: no cover - Blender runtime logging\n        print(f\"[BasedPlayblast] register fail: {cls.__name__}: {exc}\")\n        return False\n\n\ndef safe_unregister_class(cls) -&gt; bool:\n    try:\n        unregister_class(cls)\n        return True\n    except Exception as exc:  # pragma: no cover\n        print(f\"[BasedPlayblast] unregister fail: {cls.__name__}: {exc}\")\n        return False\n\n\n# -- Scene/helpers ---------------------------------------------------------\ndef get_compositor_tree(scene):\n    \"\"\"\n    Return the compositor node tree, accounting for Blender 5.0 renames.\n    \"\"\"\n    if version.is_version_at_least(5, 0, 0):\n        return getattr(scene, \"compositing_node_tree\", None)\n    return getattr(scene, \"node_tree\", None)\n\n\ndef is_geometry_nodes_modifier(modifier) -&gt; bool:\n    return getattr(modifier, \"type\", None) == \"NODES\"\n\n\ndef get_geometry_nodes_node_group(modifier):\n    if is_geometry_nodes_modifier(modifier):\n        return getattr(modifier, \"node_group\", None)\n    return None\n\n\n# -- Render IO -------------------------------------------------------------\ndef set_video_file_format(scene) -&gt; bool:\n    \"\"\"\n    Force Blender onto a video-friendly output. Returns True if a usable\n    format was chosen; False means callers should warn/abort.\n    \"\"\"\n    if not scene or not getattr(scene, \"render\", None):\n        return False\n\n    render = scene.render\n    is_blender_5 = version.is_version_at_least(5, 0, 0)\n\n    if not is_blender_5:\n        try:\n            render.image_settings.file_format = \"FFMPEG\"\n            return True\n        except Exception as exc:\n            print(f\"[BasedPlayblast] FFMPEG set failed: {exc}\")\n            return False\n\n    candidates = [\"AVI_JPEG\", \"AVI_RAW\", \"H264\", \"THEORA\", \"XVID\", \"FFMPEG\"]\n    for fmt in candidates:\n        try:\n            render.image_settings.file_format = fmt\n            print(f\"[BasedPlayblast] video format -&gt; {fmt}\")\n            return True\n        except Exception:\n            continue\n\n    # Last resort: PNG series with manual encode step\n    try:\n        render.image_settings.file_format = \"PNG\"\n        print(\"[BasedPlayblast] video fallback -&gt; PNG sequence\")\n        return False\n    except Exception as exc:\n        print(f\"[BasedPlayblast] PNG fallback failed: {exc}\")\n        return False\n\n\ndef viewport_opengl_render(context, area=None, region=None):\n    \"\"\"\n    Invoke viewport OpenGL animation render with overrides tuned per version.\n    \"\"\"\n    if bpy is None:\n        raise RuntimeError(\"bpy unavailable\")\n\n    is_blender_5 = version.is_version_at_least(5, 0, 0)\n\n    def _call(**override_kwargs):\n        with context.temp_override(**override_kwargs):\n            bpy.ops.render.opengl(\n                \"INVOKE_DEFAULT\",\n                animation=True,\n                sequencer=False,\n                write_still=False,\n                **({\"view_context\": True} if not is_blender_5 else {}),\n            )\n\n    def _resolve_region(target_area, candidate_region):\n        if candidate_region and getattr(candidate_region, \"type\", None) == \"WINDOW\":\n            return candidate_region\n        if target_area:\n            for reg in target_area.regions:\n                if getattr(reg, \"type\", None) == \"WINDOW\":\n                    return reg\n        return None\n\n    target_region = _resolve_region(area, region)\n    try:\n        if area and target_region:\n            override = context.copy()\n            override[\"area\"] = area\n            override[\"region\"] = target_region\n            _call(**override)\n            return True\n        bpy.ops.render.opengl(\n            \"INVOKE_DEFAULT\", animation=True, sequencer=False, write_still=False\n        )\n        return True\n    except TypeError:\n        # Blender 5 requires explicit view_context flag in some builds\n        if area and target_region:\n            override = context.copy()\n            override[\"area\"] = area\n            override[\"region\"] = target_region\n            with context.temp_override(**override):\n                bpy.ops.render.opengl(\n                    \"INVOKE_DEFAULT\",\n                    animation=True,\n                    sequencer=False,\n                    write_still=False,\n                    view_context=False,\n                )\n                return True\n        bpy.ops.render.opengl(\n            \"INVOKE_DEFAULT\",\n            animation=True,\n            sequencer=False,\n            write_still=False,\n            view_context=False,\n        )\n        return True\n    except Exception as exc:\n        print(f\"[BasedPlayblast] OpenGL render failed: {exc}\")\n        raise\n\n\n# -- Studio lights helpers --------------------------------------------------\ndef iter_studio_light_dirs(blender_binary_path: Optional[str]) -&gt; Iterable[str]:\n    if not blender_binary_path:\n        return []\n\n    blender_dir = os.path.dirname(blender_binary_path)\n    version_token = version.get_version_category().split(\"+\")[0]\n    candidates = [\n        os.path.join(blender_dir, \"datafiles\", \"studiolights\", \"world\"),\n        os.path.join(blender_dir, version_token, \"datafiles\", \"studiolights\", \"world\"),\n        os.path.join(os.path.dirname(blender_dir), version_token, \"datafiles\", \"studiolights\", \"world\"),\n        os.path.join(os.path.dirname(os.path.dirname(blender_binary_path)), version_token, \"datafiles\", \"studiolights\", \"world\"),\n        os.path.join(\"C:\\\\Program Files\\\\Blender Foundation\", f\"Blender {version_token}\", version_token, \"datafiles\", \"studiolights\", \"world\"),\n    ]\n    seen = set()\n    for path in candidates:\n        if path and path not in seen:\n            seen.add(path)\n            yield path\n\n\ndef find_first_existing_path(paths: Iterable[str]) -&gt; Optional[str]:\n    for path in paths:\n        if path and os.path.exists(path):\n            return path\n    return None\n\n\ndef resolve_hdri_path(studio_dir: Optional[str]) -&gt; Optional[str]:\n    if not studio_dir:\n        return None\n\n    preferred = [\n        \"forest.exr\",\n        \"studio.exr\",\n        \"city.exr\",\n        \"courtyard.exr\",\n        \"night.exr\",\n        \"sunrise.exr\",\n        \"sunset.exr\",\n    ]\n\n    for fname in preferred:\n        candidate = os.path.join(studio_dir, fname)\n        if os.path.exists(candidate):\n            return candidate\n\n    try:\n        for entry in os.listdir(studio_dir):\n            if entry.lower().endswith(\".exr\"):\n                return os.path.join(studio_dir, entry)\n    except Exception as exc:\n        print(f\"[BasedPlayblast] Studio dir listing failed: {exc}\")\n    return None\n\n"
+}
+```
+User decision: **accepted**
+
+Status: **completed**
+
+
+</details>
+</tool-use>
+
+---
+
+<think><details><summary>Thought Process</summary>
+**Preparing type error fallback and linting**</details></think>
+
+---
+
+<tool-use data-tool-type="generic" data-tool-name="read_lints">
+<details>
+          <summary>Tool use: **read_lints** • Read lints for 1 file</summary>
+      
+Lint paths:
+
+- `utils/compat.py`
+
+Lint results
+
+
+**No lint errors found**
+</details>
+</tool-use>
+
+---
+
+<think><details><summary>Thought Process</summary>
+**Summarizing update completion**</details></think>
+
+---
+
+Updated the viewport render helper so it no longer feeds a `RegionView3D` into `bpy.ops.render.opengl`. We now resolve the WINDOW region from the current area when the supplied region lacks a `type`, which fixes the “Expected a bpy.types.Region” error seen on 4.2. Let me know if you want me to retest that flow.
+
+---
+
+_**User (2025-12-02 21:12Z)**_
+
+@blender (602-847) look good?
+
+---
+
+_**Agent (model gpt-5.1-codex, mode Agent)**_
+
+<think><details><summary>Thought Process</summary>
+**Verifying log success**</details></think>
+
+---
+
+Yeah, that run looks solid. Same third‑party warnings as before, but BasedPlayblast:
+
+- grabbed FFMPEG/H.264 cleanly,
+- set the viewport/camera state,
+- kicked off OpenGL render without the Region error,
+- reported progress through frames 1‑50, and
+- restored the original render settings afterward.
+
+No tracebacks from our code, so 4.2 is behaving. Let me know if you want logs or a sample render to ship with the release.
+
+---
+
