@@ -397,37 +397,54 @@ class BPL_OT_create_playblast(Operator):
     _render_job_grace = 1.0  # seconds to wait after render stops once frames are done
     _last_frame_change_time = None
     _frames_rendered = 0
+    _last_frame_counted = 0
     _render_handlers_registered = False
+    _frame_change_handler = None
+    _render_complete_handler_ref = None
     
     def _register_render_handlers(self):
         if self._render_handlers_registered:
             return
         self._frames_rendered = 0
-        scene = bpy.context.scene
-        scene.frame_current = self._frame_start
+        self._last_frame_counted = self._frame_start - 1
+        op_ref = weakref.ref(self)
         
         def frame_change_handler(scene):
-            if scene.frame_current >= self._frame_start:
-                self._frames_rendered = max(self._frames_rendered, scene.frame_current - self._frame_start + 1)
+            operator = op_ref()
+            if not operator:
+                return
+            frame = scene.frame_current
+            if frame >= operator._frame_start and frame > operator._last_frame_counted:
+                delta = frame - operator._last_frame_counted
+                operator._frames_rendered = min(
+                    operator._frames_rendered + delta,
+                    operator._frame_end - operator._frame_start + 1
+                )
+                operator._last_frame_counted = frame
         
         def render_complete_handler(scene):
-            self._render_job_was_running = True
-            self._render_job_finished_time = time.time()
+            operator = op_ref()
+            if not operator:
+                return
+            operator._render_job_was_running = True
+            operator._render_job_finished_time = time.time()
         
         bpy.app.handlers.frame_change_post.append(frame_change_handler)
         bpy.app.handlers.render_complete.append(render_complete_handler)
         self._render_handlers_registered = True
         self._frame_change_handler = frame_change_handler
-        self._render_complete_handler = render_complete_handler
+        self._render_complete_handler_ref = render_complete_handler
     
     def _remove_render_handlers(self):
         if not self._render_handlers_registered:
             return
         if self._frame_change_handler in bpy.app.handlers.frame_change_post:
             bpy.app.handlers.frame_change_post.remove(self._frame_change_handler)
-        if self._render_complete_handler in bpy.app.handlers.render_complete:
-            bpy.app.handlers.render_complete.remove(self._render_complete_handler)
+        if self._render_complete_handler_ref in bpy.app.handlers.render_complete:
+            bpy.app.handlers.render_complete.remove(self._render_complete_handler_ref)
         self._render_handlers_registered = False
+        self._frame_change_handler = None
+        self._render_complete_handler_ref = None
     
     def modal(self, context, event):
         if event.type == 'ESC':
@@ -1379,6 +1396,8 @@ class BPL_OT_create_playblast(Operator):
         self._max_frame_seen = 0
         self._has_triggered_complete = False
         self._remove_render_handlers()
+        self._frames_rendered = 0
+        self._last_frame_counted = 0
         
         # End progress bar if it's still running
         context.window_manager.progress_end()
