@@ -34,6 +34,9 @@ jobs:
           # Copy the required files for Blender Extensions
           cp __init__.py rainys_repo_bootstrap.py README.md blender_manifest.toml addon_files/BasedPlayblast/
           
+          # Copy the utils directory (required for multi-version compatibility)
+          cp -r utils addon_files/BasedPlayblast/
+          
           # Include other necessary files if they exist
           if [ -f "requirements.txt" ]; then
             cp requirements.txt addon_files/BasedPlayblast/

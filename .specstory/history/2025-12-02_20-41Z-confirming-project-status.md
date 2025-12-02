@@ -8721,7 +8721,6 @@ _**Agent (model default, mode Agent)**_
 
 ---
 
-
 Reviewing the changelog and summarizing today's changes:
 
 
@@ -8738,7 +8737,6 @@ Reviewing the changelog and summarizing today's changes:
 
 
 ---
-
 
 Checking git status to see what changed:
 
@@ -8759,7 +8757,6 @@ git status --short
 
 
 ---
-
 
 ## Summary of Changes Today
 
@@ -8814,6 +8811,109 @@ git status --short
 - `changelog.md` (updated)
 
 All changes maintain backward compatibility with Blender 4.2 LTS and 4.5 LTS while adding support for 5.0+.
+
+---
+
+_**User (2025-12-02 22:59Z)**_
+
+@.github/workflows/release.yml:1-53 are all required files captured by the release?
+
+---
+
+_**Agent (model default, mode Agent)**_
+
+
+
+---
+
+
+
+---
+
+
+Checking which files the workflow copies and comparing with the project structure:
+
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: .github/workflows/release.yml</summary>
+
+</details>
+</tool-use>
+
+---
+
+<tool-use data-tool-type="generic" data-tool-name="list_dir">
+<details>
+            <summary>Tool use: **list_dir** • Listed directory undefined • **0** results</summary>
+        
+No results found
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+The workflow is missing the `utils/` directory. We added:
+- `utils/__init__.py`
+- `utils/version.py`
+- `utils/compat.py`
+
+These are required for the addon to work. Updating the workflow to include them:
+
+
+---
+
+<tool-use data-tool-type="write" data-tool-name="search_replace">
+
+<details><summary>Tool use: **search_replace** • Edit file: .github/workflows/release.yml</summary>
+
+**Chunk 1**
+Lines added: 3, lines removed: undefined
+
+```diff
+@@ -34,4 +34,7 @@
+            # Copy the required files for Blender Extensions
+            cp __init__.py rainys_repo_bootstrap.py README.md blender_manifest.toml addon_files/BasedPlayblast/
++           
++           # Copy the utils directory (required for multi-version compatibility)
++           cp -r utils addon_files/BasedPlayblast/
+            
+            # Include other necessary files if they exist
+```
+
+</details>
+
+</tool-use>
+
+---
+
+
+
+---
+
+
+Updated the workflow to include the `utils/` directory. It now copies:
+
+**Required files:**
+- `__init__.py` (main addon file)
+- `rainys_repo_bootstrap.py`
+- `README.md`
+- `blender_manifest.toml`
+- `utils/` directory (new — includes `__init__.py`, `version.py`, `compat.py`)
+- `requirements.txt` (if it exists)
+
+The `utils/` directory is required for:
+- Multi-version compatibility (4.2 LTS, 4.5 LTS, 5.0+)
+- Version detection and categorization
+- API compatibility functions
+
+Without it, the addon will fail, especially in Blender 5.0. The release workflow now captures all required files.
 
 ---
 
