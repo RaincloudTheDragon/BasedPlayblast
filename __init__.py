@@ -4,9 +4,10 @@ import subprocess
 import sys
 import tempfile
 import glob  # Add missing import
+import time
+import weakref
 from bpy.props import (StringProperty, BoolProperty, IntProperty, EnumProperty, PointerProperty, FloatProperty)  # type: ignore
 from bpy.types import (Panel, Operator, PropertyGroup, AddonPreferences)  # type: ignore
-import time
 
 from .rainys_repo_bootstrap import ensure_rainys_extensions_repo
 from .utils import compat as compat_utils
@@ -395,6 +396,38 @@ class BPL_OT_create_playblast(Operator):
     _render_job_finished_time = None
     _render_job_grace = 1.0  # seconds to wait after render stops once frames are done
     _last_frame_change_time = None
+    _frames_rendered = 0
+    _render_handlers_registered = False
+    
+    def _register_render_handlers(self):
+        if self._render_handlers_registered:
+            return
+        self._frames_rendered = 0
+        scene = bpy.context.scene
+        scene.frame_current = self._frame_start
+        
+        def frame_change_handler(scene):
+            if scene.frame_current >= self._frame_start:
+                self._frames_rendered = max(self._frames_rendered, scene.frame_current - self._frame_start + 1)
+        
+        def render_complete_handler(scene):
+            self._render_job_was_running = True
+            self._render_job_finished_time = time.time()
+        
+        bpy.app.handlers.frame_change_post.append(frame_change_handler)
+        bpy.app.handlers.render_complete.append(render_complete_handler)
+        self._render_handlers_registered = True
+        self._frame_change_handler = frame_change_handler
+        self._render_complete_handler = render_complete_handler
+    
+    def _remove_render_handlers(self):
+        if not self._render_handlers_registered:
+            return
+        if self._frame_change_handler in bpy.app.handlers.frame_change_post:
+            bpy.app.handlers.frame_change_post.remove(self._frame_change_handler)
+        if self._render_complete_handler in bpy.app.handlers.render_complete:
+            bpy.app.handlers.render_complete.remove(self._render_complete_handler)
+        self._render_handlers_registered = False
     
     def modal(self, context, event):
         if event.type == 'ESC':
@@ -497,6 +530,7 @@ class BPL_OT_create_playblast(Operator):
                 # Check if rendering is complete based on frame count or file existence
                 expected_frames = self._frame_end - self._frame_start + 1
                 frame_range_done = self._max_frame_seen >= self._frame_end
+                rendered_frames_done = self._frames_rendered >= expected_frames
                 file_output_done = False
                 
                 output_path = bpy.path.abspath(context.scene.render.filepath)
@@ -526,14 +560,14 @@ class BPL_OT_create_playblast(Operator):
                     self._render_job_finished_time = time.time()
                 
                 ready_to_finalize = False
-                if frame_range_done and file_output_done:
+                if rendered_frames_done:
+                    ready_to_finalize = True
+                elif file_output_done:
                     ready_to_finalize = True
                 elif frame_range_done and self._render_job_finished_time is not None:
                     if (time.time() - self._render_job_finished_time) >= self._render_job_grace:
                         ready_to_finalize = True
                         print("Render job ended; finalizing after grace period without detecting file.")
-                elif file_output_done:
-                    ready_to_finalize = True
                 
                 # Additional safeguard: if we've seen the end frame and no progress change for a moment, finalize
                 if not ready_to_finalize and frame_range_done and self._last_frame_change_time:
@@ -589,6 +623,7 @@ class BPL_OT_create_playblast(Operator):
         self._render_job_was_running = False
         self._render_job_finished_time = None
         self._last_frame_change_time = time.time()
+        self._register_render_handlers()
         
         # Temporarily override Blender's frame range if using manual range
         original_frame_start = scene.frame_start
@@ -1343,6 +1378,7 @@ class BPL_OT_create_playblast(Operator):
         props.status_message = ""
         self._max_frame_seen = 0
         self._has_triggered_complete = False
+        self._remove_render_handlers()
         
         # End progress bar if it's still running
         context.window_manager.progress_end()
