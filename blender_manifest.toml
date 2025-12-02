@@ -8,7 +8,7 @@ type = "add-on"
 
 maintainer = "RaincloudTheDragon <raincloudthedragon@gmail.com>"
 license = ["GPL-3.0-or-later"]
-blender_version_min = "5.0.0"
+blender_version_min = "4.2.0"
 
 website = "https://github.com/RaincloudTheDragon/BasedPlayblast"
 
