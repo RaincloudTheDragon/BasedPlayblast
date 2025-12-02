@@ -859,7 +859,7 @@ class BPL_OT_create_playblast(Operator):
             output_dir = bpy.path.abspath(props.output_path)
             os.makedirs(output_dir, exist_ok=True)
             
-            # Set file format via compat helper (handles 4.4-5.0+)
+            # Set file format via compat helper (handles 4.2-5.0+)
             video_format_set = compat_utils.set_video_file_format(scene)
             if not video_format_set and hasattr(scene.render, 'ffmpeg'):
                 # Still try to configure ffmpeg even if file_format couldn't be set

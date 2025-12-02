@@ -2,7 +2,7 @@
 Blender version helpers for BasedPlayblast.
 
 Keeps the add-on logic clean by centralizing all version comparisons and
-common constants for the supported tracks (4.4 LTS, 4.5 LTS, 5.0+).
+common constants for the supported tracks (4.2 LTS, 4.5 LTS, 5.0+).
 """
 
 from __future__ import annotations
@@ -12,8 +12,8 @@ try:  # Blender runtime
 except ImportError:  # During static analysis or packaging
     bpy = None  # type: ignore
 
-# Targeted LTS anchors
-VERSION_4_4_LTS = (4, 4, 0)
+# Targeted anchors
+VERSION_4_2_LTS = (4, 2, 0)
 VERSION_4_5_LTS = (4, 5, 0)
 VERSION_5_0 = (5, 0, 0)
 
@@ -52,7 +52,7 @@ def get_version_category() -> str:
     if major < 4:
         return f"{major}.{minor}"
     if major == 4 and minor < 5:
-        return "4.4"
+        return "4.2"
     if major == 4:
         return "4.5"
     return "5.0+"
@@ -60,6 +60,6 @@ def get_version_category() -> str:
 
 def is_supported() -> bool:
     """Check if the detected version is at least our minimum target."""
-    return not is_version_less_than(*VERSION_4_4_LTS)
+    return not is_version_less_than(*VERSION_4_2_LTS)
 
 

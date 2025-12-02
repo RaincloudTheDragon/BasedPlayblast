@@ -17,7 +17,7 @@ BasedPlayblast is a Blender addon that streamlines the process of creating video
 ## Installation
 
 ### Via BlenderKit's Extension Repository (Recommended)
-1. Open Blender (4.4 LTS or newer)
+1. Open Blender (4.2 LTS or newer)
 2. Install BlenderKit via https://www.blenderkit.com/get-blenderkit/
 3. Open Preferences (Ctrl + ,)
 4. Go to **Edit > Preferences > Get Extensions**
@@ -49,7 +49,7 @@ BasedPlayblast is a Blender addon that streamlines the process of creating video
 
 ## Requirements
 
-- Blender 4.4 LTS or newer (validated on 4.4 LTS, 4.5 LTS, and 5.0+)
+- Blender 4.2 LTS or newer (validated on 4.2 LTS, 4.5 LTS, and 5.0+)
 - Python 3.x (included with Blender)
 
 ## Support

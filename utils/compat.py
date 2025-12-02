@@ -1,8 +1,8 @@
 """
 Compatibility helpers wrapping Blender version-specific logic.
 
-Anything that differs between Blender 4.4, 4.5, and 5.0+ should live here so
-the main add-on stays focused on user-facing behavior.
+Anything that differs between Blender 4.2 LTS, 4.5 LTS, and 5.0+ should live here
+so the main add-on stays focused on user-facing behavior.
 """
 
 from __future__ import annotations
