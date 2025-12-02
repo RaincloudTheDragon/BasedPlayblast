@@ -1,12 +1,211 @@
-import bpy # type: ignore
+import bpy  # type: ignore
 import os
 import subprocess
 import sys
 import tempfile
 import glob  # Add missing import
-from bpy.props import (StringProperty, BoolProperty, IntProperty, EnumProperty, PointerProperty, FloatProperty) # type: ignore
-from bpy.types import (Panel, Operator, PropertyGroup, AddonPreferences) # type: ignore
+from bpy.props import (StringProperty, BoolProperty, IntProperty, EnumProperty, PointerProperty, FloatProperty)  # type: ignore
+from bpy.types import (Panel, Operator, PropertyGroup, AddonPreferences)  # type: ignore
 import time
+
+RAINYS_EXTENSIONS_REPO_NAME = "Rainy's Extensions"
+RAINYS_EXTENSIONS_REPO_URL = "https://raw.githubusercontent.com/RaincloudTheDragon/rainys-blender-extensions/refs/heads/main/index.json"
+
+
+def ensure_rainys_extensions_repo(_deferred: bool = False) -> None:
+    """Keep the Rainy's extension repository registered so updates stay discoverable."""
+    def _log(msg: str) -> None:
+        print(f"BasedPlayblast repo check: {msg}")
+
+    _log("starting repository verification")
+
+    context_class_name = type(bpy.context).__name__
+    if context_class_name == "_RestrictContext":
+        if _deferred:
+            _log("context still restricted after deferral; aborting repo check")
+            return
+
+        _log("context restricted; scheduling repo check retry")
+
+        def _retry():
+            ensure_rainys_extensions_repo(_deferred=True)
+            return None
+
+        bpy.app.timers.register(_retry, first_interval=0.5)
+        return
+
+    prefs = getattr(bpy.context, "preferences", None)
+    if prefs is None:
+        _log("no preferences available on context; skipping")
+        return
+
+    preferences_changed = False
+    addon_prefs = None
+    addon_entry = None
+    if hasattr(getattr(prefs, "addons", None), "get"):
+        addon_entry = prefs.addons.get(__name__)
+    elif hasattr(prefs, "addons"):
+        try:
+            addon_entry = prefs.addons[__name__]
+        except Exception:
+            addon_entry = None
+    if addon_entry:
+        addon_prefs = getattr(addon_entry, "preferences", None)
+    addon_repo_initialized = bool(
+        addon_prefs and getattr(addon_prefs, "repo_initialized", False)
+    )
+
+    experimental = getattr(prefs, "experimental", None)
+    if experimental and hasattr(experimental, "use_extension_platform"):
+        if not experimental.use_extension_platform:
+            experimental.use_extension_platform = True
+            preferences_changed = True
+            _log("enabled experimental extension platform")
+    else:
+        _log("extension platform flag unavailable in this Blender build")
+
+    repositories = None
+    extensions_obj = getattr(prefs, "extensions", None)
+    if extensions_obj and hasattr(extensions_obj, "repositories"):
+        repositories = extensions_obj.repositories
+
+    if repositories is None:
+        filepaths = getattr(prefs, "filepaths", None)
+        repositories = getattr(filepaths, "extension_repos", None) if filepaths else None
+
+    if repositories is None:
+        if addon_repo_initialized:
+            _log("repository previously initialized; skipping fallback")
+            return
+
+        _log("extension repositories collection missing; attempting operator fallback")
+
+        def _call_operator_with_context() -> bool:
+            if not hasattr(bpy, "ops") or not hasattr(bpy.ops, "preferences") or not hasattr(
+                bpy.ops.preferences, "extension_repo_add"
+            ):
+                _log("extension_repo_add operator unavailable")
+                return False
+
+            op_kwargs = dict(
+                name=RAINYS_EXTENSIONS_REPO_NAME,
+                remote_url=RAINYS_EXTENSIONS_REPO_URL,
+                type='REMOTE',
+            )
+
+            try:
+                if hasattr(bpy.context, "temp_override"):
+                    window = getattr(bpy.context, "window", None)
+                    if window is None:
+                        wm = getattr(bpy.context, "window_manager", None)
+                        windows = getattr(wm, "windows", []) if wm else []
+                        window = windows[0] if windows else None
+                    if window and window.screen:
+                        area = next((area for area in window.screen.areas if area.type == 'PREFERENCES'), None)
+                        if area is None:
+                            area = window.screen.areas[0] if window.screen.areas else None
+                        region = None
+                        if area:
+                            region = next((region for region in area.regions if region.type == 'WINDOW'), None)
+                    else:
+                        area = None
+                        region = None
+
+                    override_kwargs = {}
+                    if window:
+                        override_kwargs["window"] = window
+                    if area:
+                        override_kwargs["area"] = area
+                    if region:
+                        override_kwargs["region"] = region
+
+                    view_layer = getattr(bpy.context, "view_layer", None)
+                    scene = getattr(bpy.context, "scene", None)
+                    if view_layer is not None:
+                        override_kwargs["view_layer"] = view_layer
+                    if scene is not None:
+                        override_kwargs["scene"] = scene
+
+                    if override_kwargs:
+                        with bpy.context.temp_override(**override_kwargs):
+                            bpy.ops.preferences.extension_repo_add(**op_kwargs)
+                    else:
+                        bpy.ops.preferences.extension_repo_add(**op_kwargs)
+                else:
+                    # Legacy context override path (pre temp_override)
+                    override = bpy.context.copy() if hasattr(bpy.context, "copy") else {}
+                    override["view_layer"] = getattr(bpy.context, "view_layer", None)
+                    override["scene"] = getattr(bpy.context, "scene", None)
+                    bpy.ops.preferences.extension_repo_add(override, **op_kwargs)
+
+                if addon_prefs and hasattr(addon_prefs, "repo_initialized"):
+                    addon_prefs.repo_initialized = True
+                    try:
+                        if hasattr(bpy.ops, "wm") and hasattr(bpy.ops.wm, "save_userpref"):
+                            bpy.ops.wm.save_userpref()
+                            _log("preferences updated and saved")
+                    except Exception as exc:  # pragma: no cover - only for logging
+                        print(f"BasedPlayblast: could not save preferences after repo update -> {exc}")
+
+                _log("operator added repository; exiting early")
+                return True
+            except Exception as exc:
+                _log(f"operator failed to add repository: {exc}")
+                return False
+
+        _call_operator_with_context()
+        return
+
+    target_repo = next(
+        (
+            repo
+            for repo in repositories
+            if getattr(repo, "name", "") == RAINYS_EXTENSIONS_REPO_NAME
+            or getattr(repo, "url", "") == RAINYS_EXTENSIONS_REPO_URL
+        ),
+        None,
+    )
+
+    if target_repo is None:
+        _log("repo missing; creating new entry")
+        target_repo = repositories.add()
+    else:
+        _log("repo entry already present; validating fields")
+
+    changed = preferences_changed
+    def _ensure_attr(obj, attr, value):
+        if hasattr(obj, attr) and getattr(obj, attr) != value:
+            setattr(obj, attr, value)
+            return True
+        if not hasattr(obj, attr):
+            _log(f"repository entry missing attribute '{attr}', skipping field")
+        return False
+
+    if _ensure_attr(target_repo, "name", RAINYS_EXTENSIONS_REPO_NAME):
+        changed = True
+    if _ensure_attr(target_repo, "remote_url", RAINYS_EXTENSIONS_REPO_URL) or _ensure_attr(
+        target_repo, "url", RAINYS_EXTENSIONS_REPO_URL
+    ):
+        changed = True
+    if _ensure_attr(target_repo, "type", 'REMOTE'):
+        changed = True
+    if _ensure_attr(target_repo, "use_sync_on_startup", True):
+        changed = True
+    if _ensure_attr(target_repo, "use_access_token", False):
+        changed = True
+
+    if addon_prefs and hasattr(addon_prefs, "repo_initialized") and not addon_prefs.repo_initialized:
+        addon_prefs.repo_initialized = True
+        changed = True
+
+    if changed and hasattr(bpy.ops, "wm") and hasattr(bpy.ops.wm, "save_userpref"):
+        try:
+            bpy.ops.wm.save_userpref()
+            _log("preferences updated and saved")
+        except Exception as exc:  # pragma: no cover - only for logging
+            print(f"BasedPlayblast: could not save preferences after repo update -> {exc}")
+    else:
+        _log("no changes detected; nothing to persist")
 
 # Pre-defined items lists for EnumProperties
 RESOLUTION_MODE_ITEMS = [
@@ -3475,6 +3674,13 @@ class BPL_AddonPreferences(AddonPreferences):
         default="-c:v h264_nvenc -preset fast -crf 0"
     )
 
+    repo_initialized: BoolProperty(
+        name="Rainy's Extensions Added",
+        description="Internal flag to avoid re-adding Rainy's Extensions repository multiple times.",
+        default=False,
+        options={'HIDDEN'}
+    )
+
     def draw(self, context):
         layout = self.layout
         layout.label(text="BasedPlayblast User Defaults")
@@ -3520,6 +3726,7 @@ def register():
         default=False
     )
     bpy.app.handlers.load_post.append(on_load_post)
+    ensure_rainys_extensions_repo()
 
 def unregister():
     # Safely remove handler if it exists
