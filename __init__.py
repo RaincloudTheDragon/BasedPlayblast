@@ -61,114 +61,58 @@ def ensure_rainys_extensions_repo(_deferred: bool = False) -> None:
             experimental.use_extension_platform = True
             preferences_changed = True
             _log("enabled experimental extension platform")
-    else:
-        _log("extension platform flag unavailable in this Blender build")
-
     repositories = None
     extensions_obj = getattr(prefs, "extensions", None)
-    if extensions_obj and hasattr(extensions_obj, "repositories"):
-        repositories = extensions_obj.repositories
+    if extensions_obj:
+        if hasattr(extensions_obj, "repos"):
+            repositories = extensions_obj.repos
+        elif hasattr(extensions_obj, "repositories"):
+            repositories = extensions_obj.repositories
 
     if repositories is None:
         filepaths = getattr(prefs, "filepaths", None)
         repositories = getattr(filepaths, "extension_repos", None) if filepaths else None
 
     if repositories is None:
-        if addon_repo_initialized:
-            _log("repository previously initialized; skipping fallback")
-            return
-
-        _log("extension repositories collection missing; attempting operator fallback")
-
-        def _call_operator_with_context() -> bool:
-            if not hasattr(bpy, "ops") or not hasattr(bpy.ops, "preferences") or not hasattr(
-                bpy.ops.preferences, "extension_repo_add"
-            ):
-                _log("extension_repo_add operator unavailable")
-                return False
-
-            op_kwargs = dict(
-                name=RAINYS_EXTENSIONS_REPO_NAME,
-                remote_url=RAINYS_EXTENSIONS_REPO_URL,
-                type='REMOTE',
-            )
-
-            try:
-                if hasattr(bpy.context, "temp_override"):
-                    window = getattr(bpy.context, "window", None)
-                    if window is None:
-                        wm = getattr(bpy.context, "window_manager", None)
-                        windows = getattr(wm, "windows", []) if wm else []
-                        window = windows[0] if windows else None
-                    if window and window.screen:
-                        area = next((area for area in window.screen.areas if area.type == 'PREFERENCES'), None)
-                        if area is None:
-                            area = window.screen.areas[0] if window.screen.areas else None
-                        region = None
-                        if area:
-                            region = next((region for region in area.regions if region.type == 'WINDOW'), None)
-                    else:
-                        area = None
-                        region = None
-
-                    override_kwargs = {}
-                    if window:
-                        override_kwargs["window"] = window
-                    if area:
-                        override_kwargs["area"] = area
-                    if region:
-                        override_kwargs["region"] = region
-
-                    view_layer = getattr(bpy.context, "view_layer", None)
-                    scene = getattr(bpy.context, "scene", None)
-                    if view_layer is not None:
-                        override_kwargs["view_layer"] = view_layer
-                    if scene is not None:
-                        override_kwargs["scene"] = scene
-
-                    if override_kwargs:
-                        with bpy.context.temp_override(**override_kwargs):
-                            bpy.ops.preferences.extension_repo_add(**op_kwargs)
-                    else:
-                        bpy.ops.preferences.extension_repo_add(**op_kwargs)
-                else:
-                    # Legacy context override path (pre temp_override)
-                    override = bpy.context.copy() if hasattr(bpy.context, "copy") else {}
-                    override["view_layer"] = getattr(bpy.context, "view_layer", None)
-                    override["scene"] = getattr(bpy.context, "scene", None)
-                    bpy.ops.preferences.extension_repo_add(override, **op_kwargs)
-
-                if addon_prefs and hasattr(addon_prefs, "repo_initialized"):
-                    addon_prefs.repo_initialized = True
-                    try:
-                        if hasattr(bpy.ops, "wm") and hasattr(bpy.ops.wm, "save_userpref"):
-                            bpy.ops.wm.save_userpref()
-                            _log("preferences updated and saved")
-                    except Exception as exc:  # pragma: no cover - only for logging
-                        print(f"BasedPlayblast: could not save preferences after repo update -> {exc}")
-
-                _log("operator added repository; exiting early")
-                return True
-            except Exception as exc:
-                _log(f"operator failed to add repository: {exc}")
-                return False
-
-        _call_operator_with_context()
+        _log("extension repositories collection missing; skipping")
         return
 
-    target_repo = next(
-        (
-            repo
-            for repo in repositories
-            if getattr(repo, "name", "") == RAINYS_EXTENSIONS_REPO_NAME
-            or getattr(repo, "url", "") == RAINYS_EXTENSIONS_REPO_URL
-        ),
-        None,
-    )
+    def _repo_matches(repo) -> bool:
+        return getattr(repo, "remote_url", "") == RAINYS_EXTENSIONS_REPO_URL or getattr(
+            repo, "url", ""
+        ) == RAINYS_EXTENSIONS_REPO_URL
+
+    matching_indices = [idx for idx, repo in enumerate(repositories) if _repo_matches(repo)]
+
+    target_repo = None
+    if matching_indices:
+        target_repo = repositories[matching_indices[0]]
+        if len(matching_indices) > 1 and hasattr(repositories, "remove"):
+            for dup_idx in reversed(matching_indices[1:]):
+                try:
+                    repositories.remove(dup_idx)
+                    _log(f"removed duplicate repository entry at index {dup_idx}")
+                except Exception as exc:
+                    _log(f"could not remove duplicate repository at index {dup_idx}: {exc}")
+    else:
+        target_repo = next(
+            (
+                repo
+                for repo in repositories
+                if getattr(repo, "name", "") == RAINYS_EXTENSIONS_REPO_NAME
+            ),
+            None,
+        )
 
     if target_repo is None:
         _log("repo missing; creating new entry")
-        target_repo = repositories.add()
+        if hasattr(repositories, "new"):
+            target_repo = repositories.new()
+        elif hasattr(repositories, "add"):
+            target_repo = repositories.add()
+        else:
+            _log("repository collection does not support creation; aborting")
+            return
     else:
         _log("repo entry already present; validating fields")
 
@@ -181,18 +125,13 @@ def ensure_rainys_extensions_repo(_deferred: bool = False) -> None:
             _log(f"repository entry missing attribute '{attr}', skipping field")
         return False
 
-    if _ensure_attr(target_repo, "name", RAINYS_EXTENSIONS_REPO_NAME):
-        changed = True
-    if _ensure_attr(target_repo, "remote_url", RAINYS_EXTENSIONS_REPO_URL) or _ensure_attr(
-        target_repo, "url", RAINYS_EXTENSIONS_REPO_URL
-    ):
-        changed = True
-    if _ensure_attr(target_repo, "type", 'REMOTE'):
-        changed = True
-    if _ensure_attr(target_repo, "use_sync_on_startup", True):
-        changed = True
-    if _ensure_attr(target_repo, "use_access_token", False):
-        changed = True
+    changed |= _ensure_attr(target_repo, "name", RAINYS_EXTENSIONS_REPO_NAME)
+    changed |= _ensure_attr(target_repo, "module", "rainys_extensions")
+    changed |= _ensure_attr(target_repo, "use_remote_url", True)
+    changed |= _ensure_attr(target_repo, "remote_url", RAINYS_EXTENSIONS_REPO_URL)
+    changed |= _ensure_attr(target_repo, "use_sync_on_startup", True)
+    changed |= _ensure_attr(target_repo, "use_cache", True)
+    changed |= _ensure_attr(target_repo, "use_access_token", False)
 
     if addon_prefs and hasattr(addon_prefs, "repo_initialized") and not addon_prefs.repo_initialized:
         addon_prefs.repo_initialized = True
