@@ -4020,3 +4020,92 @@ No GitHub workflow changes are needed for the helper itself—the repo bootstrap
 
 ---
 
+_**User (2025-12-02 17:48Z)**_
+
+@.github/workflows/release.yml:1-53 does the release include the bootstrap module?
+
+---
+
+_**Agent (model gpt-5.1-codex, mode Agent)**_
+
+<think><details><summary>Thought Process</summary>
+**Reviewing release workflow changes**</details></think>
+
+---
+
+<tool-use data-tool-type="unknown" data-tool-name="apply_patch">
+<details>
+<summary>Tool use: **apply_patch**</summary>
+
+
+Parameters:
+
+```json
+{
+  "relativeWorkspacePath": ".github/workflows/release.yml"
+}
+```
+Additional data:
+
+```json
+{
+  "reasonForAcceptReject": {
+    "type": "dotFile"
+  },
+  "codeblockId": "34035626-41c1-40bb-871c-e3d52b02a0ab"
+}
+```
+Result:
+
+```json
+{
+  "diff": {
+    "chunks": [
+      {
+        "diffString": "            \r\n            # Copy the required files for Blender Extensions\r\n-           cp __init__.py README.md blender_manifest.toml addon_files/BasedPlayblast/\r\n+           cp __init__.py rainys_repo_bootstrap.py README.md blender_manifest.toml addon_files/BasedPlayblast/\r\n            \r\n            # Include other necessary files if they exist\r",
+        "oldStart": 33,
+        "newStart": 33,
+        "oldLines": 5,
+        "newLines": 5,
+        "linesRemoved": 1,
+        "linesAdded": 1
+      }
+    ],
+    "editor": "EDITOR_AI"
+  },
+  "shouldAutoFixLints": true,
+  "resultForModel": "Success. Updated the following files:\nM .github/workflows/release.yml",
+  "contentsAfterEdit": "name: Create Release\r\n\r\non:\r\n  workflow_dispatch:\r\n    inputs:\r\n      release_tag:\r\n        description: 'Release tag (e.g., v0.2.0)'\r\n        required: true\r\n        type: string\r\n\r\njobs:\r\n  build:\r\n    runs-on: ubuntu-latest\r\n    permissions:\r\n      contents: write\r\n    steps:\r\n      - uses: actions/checkout@v4\r\n      \r\n      - name: Install dependencies\r\n        run: pip install toml\r\n      \r\n      - name: Get Version\r\n        id: get_version\r\n        run: |\r\n          VERSION=$(python -c \"import toml; print(toml.load('blender_manifest.toml')['version'])\")\r\n          echo \"version=$VERSION\" &gt;&gt; $GITHUB_OUTPUT\r\n          echo \"zip_name=BasedPlayblast.${{ inputs.release_tag }}.zip\" &gt;&gt; $GITHUB_OUTPUT\r\n      \r\n      - name: Create ZIP\r\n        run: |\r\n          # Create a temporary directory structure\r\n          mkdir -p addon_files/BasedPlayblast\r\n          \r\n          # Copy the required files for Blender Extensions\r\n          cp __init__.py rainys_repo_bootstrap.py README.md blender_manifest.toml addon_files/BasedPlayblast/\r\n          \r\n          # Include other necessary files if they exist\r\n          if [ -f \"requirements.txt\" ]; then\r\n            cp requirements.txt addon_files/BasedPlayblast/\r\n          fi\r\n          \r\n          # Create the zip from the temporary directory\r\n          cd addon_files\r\n          zip -r \"../${{ steps.get_version.outputs.zip_name }}\" ./*\r\n      \r\n      - name: Upload Release Asset\r\n        env:\r\n          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\r\n        uses: softprops/action-gh-release@v1\r\n        with:\r\n          files: ${{ steps.get_version.outputs.zip_name }}\r\n          tag_name: ${{ inputs.release_tag }}\r\n          draft: true "
+}
+```
+User decision: **accepted**
+
+Status: **completed**
+
+
+</details>
+</tool-use>
+
+---
+
+<tool-use data-tool-type="generic" data-tool-name="read_lints">
+<details>
+          <summary>Tool use: **read_lints** • Read lints for 1 file</summary>
+      
+Lint paths:
+
+- `.github/workflows/release.yml`
+
+Lint results
+
+
+**No lint errors found**
+</details>
+</tool-use>
+
+---
+
+Updated `.github/workflows/release.yml` so the packaging step copies `rainys_repo_bootstrap.py` into the release ZIP along with `__init__.py`, ensuring the shared helper ships with every build. No linter issues reported.
+
+---
+
