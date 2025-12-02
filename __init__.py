@@ -15,7 +15,7 @@ RAINYS_EXTENSIONS_REPO_URL = "https://raw.githubusercontent.com/RaincloudTheDrag
 def ensure_rainys_extensions_repo(_deferred: bool = False) -> None:
     """Keep the Rainy's extension repository registered so updates stay discoverable."""
     def _log(msg: str) -> None:
-        print(f"BasedPlayblast repo check: {msg}")
+        print(f"RainysExtensionsCheck: {msg}")
 
     _log("starting repository verification")
 
