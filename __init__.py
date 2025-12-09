@@ -676,17 +676,25 @@ class BPL_OT_create_playblast(Operator):
                                      glob.glob(os.path.join(frame_output_dir, "*.jpeg")))
                         file_output_done = len(frame_files) >= expected_frames
                 elif getattr(self, '_needs_video_encode', False):
-                    # Check for last frame file (PNG or JPEG) or completed frame count
+                    # Check for last frame file (PNG or JPEG) - must check for actual last frame number
                     # Determine extension from current render settings
                     current_format = context.scene.render.image_settings.file_format
                     frame_ext = ".jpg" if current_format == "JPEG" else ".png"
-                    expected_frame = f"{output_path}{expected_frames:04d}{frame_ext}"
-                    if os.path.exists(expected_frame):
+                    # Check for the actual last frame file (frame_end, not expected_frames)
+                    last_frame_file = f"{output_path}{self._frame_end:04d}{frame_ext}"
+                    if os.path.exists(last_frame_file):
                         file_output_done = True
                     else:
-                        # Check both PNG and JPEG files
+                        # Also check both PNG and JPEG files, but verify we have the last frame
                         frame_matches = glob.glob(f"{output_path}*.png") + glob.glob(f"{output_path}*.jpg") + glob.glob(f"{output_path}*.jpeg")
-                        file_output_done = len(frame_matches) >= expected_frames
+                        # Check if we have at least expected_frames AND the last frame exists
+                        if len(frame_matches) >= expected_frames:
+                            # Verify the last frame file exists
+                            last_frame_png = f"{output_path}{self._frame_end:04d}.png"
+                            last_frame_jpg = f"{output_path}{self._frame_end:04d}.jpg"
+                            file_output_done = os.path.exists(last_frame_png) or os.path.exists(last_frame_jpg)
+                        else:
+                            file_output_done = False
                 else:
                     file_ext = get_file_extension(context.scene.basedplayblast.video_format)
                     file_output_done = os.path.exists(output_path + file_ext)
@@ -700,17 +708,36 @@ class BPL_OT_create_playblast(Operator):
                     self._render_job_finished_time = time.time()
                 
                 ready_to_finalize = False
-                if rendered_frames_done:
-                    ready_to_finalize = True
-                elif file_output_done:
-                    ready_to_finalize = True
-                elif frame_range_done and self._render_job_finished_time is not None:
-                    if (time.time() - self._render_job_finished_time) >= self._render_job_grace:
+                # For video encoding path, we MUST have both the last frame file AND the render job must be finished
+                if getattr(self, '_needs_video_encode', False):
+                    # Strict check: need the last frame file AND render job must be finished
+                    if file_output_done and not render_job_running:
+                        if self._render_job_finished_time is not None:
+                            # Wait a bit after render job finishes to ensure all files are written
+                            if (time.time() - self._render_job_finished_time) >= 0.5:
+                                ready_to_finalize = True
+                        elif not self._render_job_was_running:
+                            # If render job was never running (unlikely but possible), just check file
+                            ready_to_finalize = file_output_done
+                    # Additional safeguard: if we've seen the end frame and render job finished, wait a bit then finalize
+                    elif frame_range_done and not render_job_running and self._render_job_finished_time is not None:
+                        if (time.time() - self._render_job_finished_time) >= self._render_job_grace:
+                            ready_to_finalize = True
+                            print("Render job ended; finalizing after grace period (video encode path).")
+                else:
+                    # For non-video-encode paths, use original logic
+                    if rendered_frames_done:
                         ready_to_finalize = True
-                        print("Render job ended; finalizing after grace period without detecting file.")
+                    elif file_output_done:
+                        ready_to_finalize = True
+                    elif frame_range_done and self._render_job_finished_time is not None:
+                        if (time.time() - self._render_job_finished_time) >= self._render_job_grace:
+                            ready_to_finalize = True
+                            print("Render job ended; finalizing after grace period without detecting file.")
                 
                 # Additional safeguard: if we've seen the end frame and no progress change for a moment, finalize
-                if not ready_to_finalize and frame_range_done and self._last_frame_change_time:
+                # But only if render job is not running
+                if not ready_to_finalize and frame_range_done and not render_job_running and self._last_frame_change_time:
                     if (time.time() - self._last_frame_change_time) >= 1.0:
                         ready_to_finalize = True
                         print("Frame progress stalled at end frame; finalizing to prevent hang.")
@@ -1493,9 +1520,12 @@ class BPL_OT_create_playblast(Operator):
             # Build FFmpeg command with proper structure:
             # 1. All inputs first (video, then audio if present)
             # 2. Then all encoding options
+            # Note: FFmpeg's %04d pattern expects frames starting at 0000, but our frames start at frame_start
+            # We need to add -start_number to tell FFmpeg the actual starting frame number
             ffmpeg_cmd = [
                 "ffmpeg", "-y",  # Overwrite output file
                 "-framerate", str(framerate),
+                "-start_number", str(self._frame_start),  # Tell FFmpeg the starting frame number
                 "-i", frame_pattern,
             ]
             
