@@ -1,3 +1,8 @@
+# v2.6.1
+    - Bugfix:
+        - Fixed premature video conversion triggering before all frames completed
+        - Fixed FFmpeg frame pattern for non-zero starting frames (added -start_number parameter)
+
 # v2.6.0
     - Added comprehensive audio support (#7)
         - Audio detection for sequencer strips

@@ -932,3 +932,105 @@ _**Agent (model default, mode Agent)**_
 
 ---
 
+
+Premature completion, wrong frame start
+
+---
+
+_**User (2025-12-09 22:10Z)**_
+
+@changelog.md:1-2 brief summary here
+
+---
+
+_**Agent (model default, mode Agent)**_
+
+
+
+---
+
+
+
+
+
+---
+
+<tool-use data-tool-type="read" data-tool-name="read_file">
+<details><summary>Tool use: **read_file** • Read file: changelog.md</summary>
+
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+
+
+
+---
+
+<tool-use data-tool-type="write" data-tool-name="search_replace">
+
+<details><summary>Tool use: **search_replace** • Edit file: changelog.md</summary>
+
+**Chunk 1**
+Lines added: 2, lines removed: undefined
+
+```diff
+@@ -1,4 +1,6 @@
+  # v2.6.1
+      - Bugfix:
++         - Fixed premature video conversion triggering before all frames completed
++         - Fixed FFmpeg frame pattern for non-zero starting frames (added -start_number parameter)
+  
+  # v2.6.0
+```
+
+</details>
+
+</tool-use>
+
+---
+
+
+
+---
+
+
+
+
+
+---
+
+<tool-use data-tool-type="generic" data-tool-name="read_lints">
+<details>
+          <summary>Tool use: **read_lints** • Read lints for 1 file</summary>
+      
+Lint paths:
+
+- `changelog.md`
+
+Lint results
+
+
+**No lint errors found**
+</details>
+</tool-use>
+
+---
+
+
+
+---
+
+
+Added a brief summary of the bugfixes to the changelog. The entry covers:
+1. Premature video conversion fix
+2. FFmpeg frame pattern fix for non-zero starting frames
+
+---
+
