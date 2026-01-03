@@ -814,7 +814,8 @@ class BPL_OT_create_playblast(Operator):
             'frame_end': original_frame_end,      # Store original frame end
             'image_settings': {
                 'file_format': scene.render.image_settings.file_format,
-                'color_mode': scene.render.image_settings.color_mode
+                'color_mode': scene.render.image_settings.color_mode,
+                'compression': self._safe_get_compression_value(scene)
             },
             'display_mode': context.preferences.view.render_display_type,
             # Store metadata settings
@@ -1871,6 +1872,18 @@ class BPL_OT_create_playblast(Operator):
             print(f"Error converting frames to video: {str(e)}")
             self.report({'ERROR'}, f"Video conversion error: {str(e)}")
     
+    def _safe_get_compression_value(self, scene):
+        """Safely get compression value, returning None if not available or format doesn't support it."""
+        try:
+            if not hasattr(scene.render.image_settings, 'compression'):
+                return None
+            current_format = str(scene.render.image_settings.file_format).upper()
+            if current_format not in ('PNG', 'JPEG', 'JPEG2000'):
+                return None
+            return scene.render.image_settings.compression
+        except (AttributeError, TypeError, ValueError):
+            return None
+    
     def cleanup(self, context):
         # Reset progress properties
         props = context.scene.basedplayblast
@@ -1916,8 +1929,42 @@ class BPL_OT_create_playblast(Operator):
             scene.render.use_overwrite = self._original_settings['use_overwrite']
             scene.render.use_placeholder = self._original_settings['use_placeholder']
             scene.camera = self._original_settings['camera']
-            scene.render.image_settings.file_format = self._original_settings['image_settings']['file_format']
-            scene.render.image_settings.color_mode = self._original_settings['image_settings']['color_mode']
+            # Restore image settings safely using .get() to avoid KeyError
+            try:
+                if isinstance(self._original_settings, dict):
+                    img_settings = self._original_settings.get('image_settings')
+                    if img_settings and isinstance(img_settings, dict):
+                        # Restore file_format first
+                        file_format = img_settings.get('file_format')
+                        if file_format is not None:
+                            scene.render.image_settings.file_format = file_format
+                        
+                        # Restore color_mode
+                        color_mode = img_settings.get('color_mode')
+                        if color_mode is not None:
+                            scene.render.image_settings.color_mode = color_mode
+                        
+                        # Restore compression - check if format supports it
+                        compression = img_settings.get('compression')
+                        if compression is not None:
+                            # Get current format (after restoration above)
+                            try:
+                                current_format = scene.render.image_settings.file_format
+                                # Convert to string for comparison (handles enum types)
+                                format_str = str(current_format).upper()
+                                
+                                # Only restore compression if file format supports it
+                                if format_str in ('PNG', 'JPEG', 'JPEG2000'):
+                                    try:
+                                        if hasattr(scene.render.image_settings, 'compression'):
+                                            scene.render.image_settings.compression = compression
+                                            print(f"Restored PNG compression: {compression}%")
+                                    except (AttributeError, TypeError, ValueError):
+                                        pass  # Silently fail if compression can't be set
+                            except (AttributeError, TypeError):
+                                pass  # Silently fail if format can't be read
+            except (KeyError, TypeError, AttributeError):
+                pass  # Silently fail if settings can't be restored
             context.preferences.view.render_display_type = self._original_settings['display_mode']
             
             # CRITICAL: Restore frame range to original values - THIS FIXES THE MAIN BUG
