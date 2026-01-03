@@ -1,3 +1,8 @@
+# v2.6.2
+    - Bugfix:
+        - Fixed PNG compression not being restored after playblast completion (#9)
+        - Added safe compression handling to prevent crashes when accessing unsupported formats
+
 # v2.6.1
     - Bugfix:
         - Fixed premature video conversion triggering before all frames completed
