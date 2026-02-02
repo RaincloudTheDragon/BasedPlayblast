@@ -1,3 +1,6 @@
+# v2.6.3
+    - Bugfix: fix ffmpeg inaccessibility by adding fallbacks and a preference
+
 # v2.6.2
     - Bugfix:
         - Fixed PNG compression not being restored after playblast completion (#9)
