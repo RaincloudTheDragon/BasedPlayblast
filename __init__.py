@@ -1,5 +1,6 @@
 import bpy  # type: ignore
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -90,6 +91,46 @@ def get_file_extension(video_format):
         return ".mkv"
     else:
         return ".mp4"  # Default to mp4 if unknown
+
+def _resolve_ffmpeg_path():
+    """Resolve ffmpeg executable. Prefer addon pref, then PATH, then Blender's bundled ffmpeg."""
+    try:
+        for addon in (__name__, "basedplayblast", "bl_ext.basedplayblast", "BasedPlayblast"):
+            prefs = bpy.context.preferences.addons.get(addon)
+            if prefs and prefs.preferences and hasattr(prefs.preferences, "ffmpeg_path"):
+                custom = getattr(prefs.preferences, "ffmpeg_path", "").strip()
+                if custom and os.path.isfile(custom):
+                    return custom
+    except Exception:
+        pass
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
+    try:
+        blender_dir = os.path.dirname(bpy.app.binary_path)
+        version_str = f"{bpy.app.version[0]}.{bpy.app.version[1]}"
+        for search_dir in (blender_dir, os.path.join(blender_dir, version_str)):
+            for name in ("ffmpeg.exe", "ffmpeg"):
+                path = os.path.join(search_dir, name)
+                if os.path.isfile(path):
+                    return path
+    except Exception:
+        pass
+    # Common Windows install locations (Steam/launcher often omit PATH)
+    for candidate in (
+        r"C:\ProgramData\chocolatey\bin\ffmpeg.exe",  # Chocolatey
+        r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+        r"C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe",
+        r"C:\ffmpeg\bin\ffmpeg.exe",
+        os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"), "ffmpeg", "bin", "ffmpeg.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"), "ffmpeg", "bin", "ffmpeg.exe"),
+    ):
+        try:
+            if candidate and os.path.isfile(candidate):
+                return candidate
+        except Exception:
+            pass
+    return "ffmpeg"  # Fallback; will fail with clear error if missing
 
 # Helper function to convert quality enum to FFmpeg CRF value
 def get_ffmpeg_quality(quality_enum):
@@ -1524,7 +1565,7 @@ class BPL_OT_create_playblast(Operator):
             # Note: FFmpeg's %04d pattern expects frames starting at 0000, but our frames start at frame_start
             # We need to add -start_number to tell FFmpeg the actual starting frame number
             ffmpeg_cmd = [
-                "ffmpeg", "-y",  # Overwrite output file
+                _resolve_ffmpeg_path(), "-y",  # Overwrite output file
                 "-framerate", str(framerate),
                 "-start_number", str(self._frame_start),  # Tell FFmpeg the starting frame number
                 "-i", frame_pattern,
@@ -1676,7 +1717,7 @@ class BPL_OT_create_playblast(Operator):
                                                             duration = (self._frame_end - self._frame_start + 1) / fps
                                                             
                                                             ffmpeg_extract_cmd = [
-                                                                "ffmpeg", "-y",
+                                                                _resolve_ffmpeg_path(), "-y",
                                                                 "-i", sound_path,
                                                                 "-ss", str(max(0, start_time)),
                                                                 "-t", str(duration),
@@ -1869,8 +1910,10 @@ class BPL_OT_create_playblast(Operator):
                 self.report({'ERROR'}, f"Video conversion failed: {result.stderr}")
                 
         except Exception as e:
-            print(f"Error converting frames to video: {str(e)}")
-            self.report({'ERROR'}, f"Video conversion error: {str(e)}")
+            err_msg = str(e)
+            print(f"Error converting frames to video: {err_msg}")
+            hint = " Set FFmpeg Path in Edit > Preferences > Add-ons > BasedPlayblast." if "WinError 2" in err_msg or "cannot find the file" in err_msg.lower() else ""
+            self.report({'ERROR'}, f"Video conversion error: {err_msg}{hint}")
     
     def _safe_get_compression_value(self, scene):
         """Safely get compression value, returning None if not available or format doesn't support it."""
@@ -3940,6 +3983,13 @@ class BPL_AddonPreferences(AddonPreferences):
         default="-c:v h264_nvenc -preset fast -crf 0"
     )
 
+    ffmpeg_path: StringProperty(
+        name="FFmpeg Path",
+        description="Full path to ffmpeg.exe (e.g. C:\\ffmpeg\\bin\\ffmpeg.exe). Leave blank to use PATH or Blender's bundled ffmpeg. Required when launching Blender from Steam.",
+        default="",
+        subtype='FILE_PATH'
+    )
+
     repo_initialized: BoolProperty(
         name="Rainy's Extensions Added",
         description="Internal flag to avoid re-adding Rainy's Extensions repository multiple times.",
@@ -3954,6 +4004,7 @@ class BPL_AddonPreferences(AddonPreferences):
         box.prop(self, "default_video_quality")
         box.prop(self, "default_use_custom_ffmpeg_args")
         box.prop(self, "default_ffmpeg_args")
+        box.prop(self, "ffmpeg_path", text="FFmpeg Path (Steam)")
 
 def on_load_post(dummy):
     """Applies user defaults after a file is loaded."""
