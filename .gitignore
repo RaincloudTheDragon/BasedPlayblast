@@ -21,6 +21,4 @@ basedplayblast_updater/
 .idea/
 *.swp
 *.swo 
-
-# SpecStory explanation file
-.specstory/.what-is-this.md
+.specstory/
