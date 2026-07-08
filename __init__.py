@@ -521,6 +521,13 @@ class BPLProperties(PropertyGroup):
         default=""
     )
 
+def _make_frame_temp_dir(file_name: str) -> str:
+    """Create a unique temp directory for intermediate playblast frames."""
+    base = os.path.join(tempfile.gettempdir(), "basedplayblast", "frames")
+    os.makedirs(base, exist_ok=True)
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in file_name)
+    return tempfile.mkdtemp(prefix=f"{safe_name}_", dir=base)
+
 # Main Operator
 class BPL_OT_create_playblast(Operator):
     bl_idname = "bpl.create_playblast"
@@ -558,6 +565,17 @@ class BPL_OT_create_playblast(Operator):
     _render_handlers_registered = False
     _frame_change_handler = None
     _render_complete_handler_ref = None
+    _frame_temp_dir = None
+    
+    def _remove_frame_temp_dir(self):
+        temp_dir = getattr(self, '_frame_temp_dir', None)
+        if temp_dir and os.path.isdir(temp_dir):
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                print(f"Removed frame temp directory: {temp_dir}")
+            except Exception as e:
+                print(f"Could not remove frame temp directory {temp_dir}: {e}")
+        self._frame_temp_dir = None
     
     def _register_render_handlers(self):
         if self._render_handlers_registered:
@@ -709,7 +727,9 @@ class BPL_OT_create_playblast(Operator):
                 
                 output_path = bpy.path.abspath(context.scene.render.filepath)
                 if getattr(self, '_use_actual_render', False):
-                    frame_output_dir = os.path.join(bpy.path.abspath(context.scene.basedplayblast.output_path), "frames")
+                    frame_output_dir = getattr(self, '_frame_temp_dir', None)
+                    if not frame_output_dir:
+                        frame_output_dir = os.path.dirname(output_path)
                     if os.path.exists(frame_output_dir):
                         # Check for both PNG and JPEG files
                         frame_files = (glob.glob(os.path.join(frame_output_dir, "*.png")) + 
@@ -831,6 +851,7 @@ class BPL_OT_create_playblast(Operator):
         self._render_job_was_running = False
         self._render_job_finished_time = None
         self._last_frame_change_time = time.time()
+        self._frame_temp_dir = None
         self._register_render_handlers()
         
         # Temporarily override Blender's frame range if using manual range
@@ -1190,6 +1211,10 @@ class BPL_OT_create_playblast(Operator):
             frame_range_str = f"_{self._frame_start}-{self._frame_end}"
             file_name += frame_range_str
             
+            # Intermediate frames go to OS temp (faster on network/git-controlled output paths)
+            self._frame_temp_dir = _make_frame_temp_dir(file_name)
+            print(f"Frame temp directory: {self._frame_temp_dir}")
+            
             # Check if we're using image format (PNG) that needs encoding
             # NOTE: In Blender 5.0, image_settings.file_format no longer includes video formats
             # (FFMPEG, AVI_JPEG, etc.). This was an intentional API change by Blender to separate
@@ -1204,7 +1229,7 @@ class BPL_OT_create_playblast(Operator):
             if is_image_format:
                 # For image formats, use proper frame numbering pattern (no video extension)
                 # Blender will append frame numbers automatically (e.g., file_0001.png)
-                scene.render.filepath = os.path.join(output_dir, file_name + "_")
+                scene.render.filepath = os.path.join(self._frame_temp_dir, file_name + "_")
                 scene.render.use_file_extension = True  # This enables frame numbering
                 scene.render.use_overwrite = True
                 scene.render.use_placeholder = False
@@ -1331,10 +1356,8 @@ class BPL_OT_create_playblast(Operator):
                         scene.render.image_settings.color_mode = 'RGBA'
                         scene.render.image_settings.compression = 15  # Minimal compression for speed
                         
-                        # Set frame-based output path for individual frames
-                        frame_output_dir = os.path.join(output_dir, "frames")
-                        os.makedirs(frame_output_dir, exist_ok=True)
-                        scene.render.filepath = os.path.join(frame_output_dir, file_name + "_")
+                        # Set frame-based output path for individual frames (local temp)
+                        scene.render.filepath = os.path.join(self._frame_temp_dir, file_name + "_")
                         
                         print(f"WARNING: Using frame-based rendering for Cycles stability")
                         print(f"Frame output: {scene.render.filepath}")
@@ -1456,7 +1479,7 @@ class BPL_OT_create_playblast(Operator):
             video_ext = get_file_extension(props.video_format)
             video_output = os.path.join(output_dir, file_name + video_ext)
             
-            # Frame pattern for FFmpeg - check both possible locations and patterns
+            # Frame pattern for FFmpeg - read from temp dir when available
             # Support both PNG and JPEG (JPEG used in Blender 5.0 for faster encoding)
             import glob
             
@@ -1464,31 +1487,44 @@ class BPL_OT_create_playblast(Operator):
             current_format = scene.render.image_settings.file_format
             frame_ext = ".jpg" if current_format == "JPEG" else ".png"
             
-            # Pattern 1: Files in output_dir with format "filename_0001.{ext}"
-            frame_pattern1 = os.path.join(output_dir, file_name + "_%04d" + frame_ext)
-            # Pattern 2: Files in frames subdirectory
-            frame_output_dir = os.path.join(output_dir, "frames")
-            frame_pattern2 = os.path.join(frame_output_dir, file_name + "_%04d" + frame_ext)
-            # Pattern 3: Files with .mp4 in name (Blender 5.0 issue - wrong extension in path)
-            frame_pattern3 = os.path.join(output_dir, file_name + ".mp4%04d" + frame_ext)
-            
-            # Try to find which pattern matches actual files
-            test_patterns = [
-                (frame_pattern1, output_dir),
-                (frame_pattern2, frame_output_dir),
-                (frame_pattern3, output_dir)
-            ]
-            
             frame_pattern = None
             frame_dir = None
-            for pattern, dir_path in test_patterns:
-                # Test if files matching this pattern exist
-                test_files = glob.glob(pattern.replace("%04d", "????"))
-                if test_files:
-                    frame_pattern = pattern
-                    frame_dir = dir_path
-                    print(f"Found frame files matching pattern: {pattern}")
-                    break
+            frame_temp_dir = getattr(self, '_frame_temp_dir', None)
+            if frame_temp_dir and os.path.isdir(frame_temp_dir):
+                temp_pattern = os.path.join(frame_temp_dir, file_name + "_%04d" + frame_ext)
+                temp_files = glob.glob(temp_pattern.replace("%04d", "????"))
+                if not temp_files:
+                    for ext in [".png", ".jpg", ".jpeg"]:
+                        temp_files = glob.glob(os.path.join(frame_temp_dir, file_name + "_*" + ext))
+                        if temp_files:
+                            frame_ext = ext
+                            temp_pattern = os.path.join(frame_temp_dir, file_name + "_%04d" + frame_ext)
+                            break
+                if temp_files:
+                    frame_pattern = temp_pattern
+                    frame_dir = frame_temp_dir
+                    print(f"Found frame files in temp directory: {frame_temp_dir}")
+            
+            if not frame_pattern:
+                # Fallback: legacy locations when temp dir is unset
+                frame_pattern1 = os.path.join(output_dir, file_name + "_%04d" + frame_ext)
+                frame_output_dir = os.path.join(output_dir, "frames")
+                frame_pattern2 = os.path.join(frame_output_dir, file_name + "_%04d" + frame_ext)
+                frame_pattern3 = os.path.join(output_dir, file_name + ".mp4%04d" + frame_ext)
+                
+                test_patterns = [
+                    (frame_pattern1, output_dir),
+                    (frame_pattern2, frame_output_dir),
+                    (frame_pattern3, output_dir)
+                ]
+                
+                for pattern, dir_path in test_patterns:
+                    test_files = glob.glob(pattern.replace("%04d", "????"))
+                    if test_files:
+                        frame_pattern = pattern
+                        frame_dir = dir_path
+                        print(f"Found frame files matching pattern: {pattern}")
+                        break
             
             if not frame_pattern:
                 # Fallback: search for any frame files (PNG or JPEG) with the base filename
@@ -1875,10 +1911,11 @@ class BPL_OT_create_playblast(Operator):
                     except Exception as e:
                         print(f"Could not remove temporary audio file {audio_file}: {e}")
                 
-                # Clean up frame files from the directory where they were found
-                import glob
-                if frame_dir:
-                    # Remove both PNG and JPEG frame files
+                # Clean up intermediate frame files
+                if getattr(self, '_frame_temp_dir', None):
+                    self._remove_frame_temp_dir()
+                elif frame_dir:
+                    import glob
                     frame_files = (glob.glob(os.path.join(frame_dir, file_name + "*.png")) +
                                   glob.glob(os.path.join(frame_dir, file_name + "*.jpg")) +
                                   glob.glob(os.path.join(frame_dir, file_name + "*.jpeg")))
@@ -1888,15 +1925,14 @@ class BPL_OT_create_playblast(Operator):
                             print(f"Removed frame file: {frame_file}")
                         except Exception as e:
                             print(f"Could not remove frame file {frame_file}: {e}")
-                
-                # Remove frame directory if it exists and is empty
-                frame_output_dir = os.path.join(output_dir, "frames")
-                if os.path.exists(frame_output_dir):
-                    try:
-                        if not os.listdir(frame_output_dir):
-                            os.rmdir(frame_output_dir)
-                    except:
-                        pass
+                    
+                    frame_output_dir = os.path.join(output_dir, "frames")
+                    if os.path.exists(frame_output_dir):
+                        try:
+                            if not os.listdir(frame_output_dir):
+                                os.rmdir(frame_output_dir)
+                        except:
+                            pass
                     
             else:
                 print(f"FFmpeg error: {result.stderr}")
@@ -1938,6 +1974,7 @@ class BPL_OT_create_playblast(Operator):
         self._remove_render_handlers()
         self._frames_rendered = 0
         self._last_frame_counted = 0
+        self._remove_frame_temp_dir()
         
         # End progress bar if it's still running
         context.window_manager.progress_end()
