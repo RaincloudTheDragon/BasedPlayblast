@@ -20,7 +20,7 @@ set SOURCE_FILE=%~dp0BasedPlayblast.js
 set SOURCE_FILE2=%~dp0BasedPlayblast_Optix_GPU.js
 
 :: Destination directory
-set DEST_DIR=C:\Program Files\Blender Foundation\Flamenco 3.7\scripts
+set DEST_DIR=F:\software\Flamenco\scripts
 
 :: Check if destination directory exists
 if not exist "%DEST_DIR%" (
