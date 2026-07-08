@@ -336,7 +336,7 @@ class BPLProperties(PropertyGroup):
     
     video_bitrate_limit: IntProperty(  # type: ignore
         name="Bitrate Limit (Mbps)",
-        description="Optional maximum video bitrate in Mbps (0 = no limit)",
+        description="Optional NVENC VBR bitrate cap in Mbps (0 = uncapped)",
         default=0,
         min=0,
         max=500
@@ -439,7 +439,7 @@ class BPLProperties(PropertyGroup):
     custom_ffmpeg_args: StringProperty(  # type: ignore
         name="Custom FFmpeg Args",
         description="Custom FFmpeg command line arguments (for advanced users)",
-        default="-c:v av1_nvenc -preset p7 -rc constqp -cq 0"
+        default="-c:v av1_nvenc -preset p7 -tune hq -rc vbr -rc-lookahead 32 -spatial-aq 1 -aq-strength 15 -cq 0"
     )
     
     is_rendering: BoolProperty(  # type: ignore
@@ -3941,14 +3941,14 @@ class BPL_AddonPreferences(AddonPreferences):
     
     default_encode_speed: EnumProperty(
         name="Default Encode Speed",
-        description="Default encoder speed preset. CQ/CRF 0 is always used for quality.",
+        description="Default encoder speed preset. NVENC uses VBR with CQ 0.",
         items=ENCODE_SPEED_ITEMS,
         default='SLOWEST'
     )
 
     default_video_bitrate_limit: IntProperty(
         name="Default Bitrate Limit (Mbps)",
-        description="Default optional maximum video bitrate (0 = no limit)",
+        description="Default optional NVENC VBR bitrate cap in Mbps (0 = uncapped)",
         default=0,
         min=0,
         max=500
@@ -3963,7 +3963,7 @@ class BPL_AddonPreferences(AddonPreferences):
     default_ffmpeg_args: StringProperty(
         name="Default FFmpeg Arguments",
         description="Default custom FFmpeg arguments for advanced users.",
-        default="-c:v av1_nvenc -preset p7 -rc constqp -cq 0"
+        default="-c:v av1_nvenc -preset p7 -tune hq -rc vbr -rc-lookahead 32 -spatial-aq 1 -aq-strength 15 -cq 0"
     )
 
     ffmpeg_path: StringProperty(

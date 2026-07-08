@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-from typing import Iterable
 
 ENCODE_SPEED_ITEMS = [
     ('FASTEST', "Fastest", "Fastest encode; lowest quality preset"),
@@ -29,6 +28,8 @@ _LIBX264_PRESETS = {
     'SLOWEST': 'veryslow',
 }
 
+_NVENC_ENCODERS = ('av1_nvenc', 'hevc_nvenc', 'h264_nvenc')
+
 _ENCODER_CACHE: dict[str, str] = {}
 
 
@@ -47,13 +48,13 @@ def _encoder_list_text(ffmpeg_path: str) -> str:
 
 
 def detect_video_encoder(ffmpeg_path: str) -> str:
-    """Pick the best available encoder: av1_nvenc, h264_nvenc, then libx264."""
+    """Pick the best available encoder: av1_nvenc, hevc_nvenc, h264_nvenc, then libx264."""
     cached = _ENCODER_CACHE.get(ffmpeg_path)
     if cached:
         return cached
 
     encoders = _encoder_list_text(ffmpeg_path)
-    for candidate in ('av1_nvenc', 'h264_nvenc', 'libx264'):
+    for candidate in _NVENC_ENCODERS + ('libx264',):
         if candidate in encoders:
             _ENCODER_CACHE[ffmpeg_path] = candidate
             return candidate
@@ -62,11 +63,36 @@ def detect_video_encoder(ffmpeg_path: str) -> str:
     return 'libx264'
 
 
-def _bitrate_limit_args(bitrate_limit_mbps: int) -> list[str]:
+def _vbr_bitrate_args(bitrate_limit_mbps: int) -> list[str]:
+    """Optional NVENC VBR bitrate cap. 0 = uncapped."""
     if bitrate_limit_mbps <= 0:
         return []
-    limit = str(bitrate_limit_mbps)
-    return ['-maxrate', f'{limit}M', '-bufsize', f'{bitrate_limit_mbps * 2}M']
+    return [
+        '-b:v', f'{bitrate_limit_mbps}M',
+        '-maxrate', f'{bitrate_limit_mbps}M',
+        '-bufsize', f'{bitrate_limit_mbps * 2}M',
+    ]
+
+
+def _nvenc_encode_args(
+    encoder: str,
+    encode_speed: str,
+    bitrate_limit_mbps: int,
+) -> list[str]:
+    """GigaMux-style NVENC VBR: hq tune, spatial AQ, cq 0; optional bitrate cap."""
+    speed = encode_speed if encode_speed in _NVENC_PRESETS else 'SLOWEST'
+    args = [
+        '-c:v', encoder,
+        '-preset', _NVENC_PRESETS[speed],
+        '-tune', 'hq',
+        '-rc', 'vbr',
+        '-rc-lookahead', '32',
+        '-spatial-aq', '1',
+        '-aq-strength', '15',
+        '-cq', '0',
+    ]
+    args.extend(_vbr_bitrate_args(bitrate_limit_mbps))
+    return args
 
 
 def build_video_encode_args(
@@ -74,33 +100,18 @@ def build_video_encode_args(
     encode_speed: str = 'SLOWEST',
     bitrate_limit_mbps: int = 0,
 ) -> list[str]:
-    """Build FFmpeg video encode args with CQ/CRF 0 defaults and encoder fallback."""
+    """Build FFmpeg video encode args for visually lossless playblast output."""
     encoder = detect_video_encoder(ffmpeg_path)
-    speed = encode_speed if encode_speed in _NVENC_PRESETS else 'SLOWEST'
 
-    if encoder == 'av1_nvenc':
-        args = [
-            '-c:v', 'av1_nvenc',
-            '-preset', _NVENC_PRESETS[speed],
-            '-rc', 'constqp',
-            '-cq', '0',
-        ]
-    elif encoder == 'h264_nvenc':
-        args = [
-            '-c:v', 'h264_nvenc',
-            '-preset', _NVENC_PRESETS[speed],
-            '-rc', 'constqp',
-            '-cq', '0',
-        ]
-    else:
-        args = [
-            '-c:v', 'libx264',
-            '-preset', _LIBX264_PRESETS[speed],
-            '-crf', '0',
-        ]
+    if encoder in _NVENC_ENCODERS:
+        return _nvenc_encode_args(encoder, encode_speed, bitrate_limit_mbps)
 
-    args.extend(_bitrate_limit_args(bitrate_limit_mbps))
-    return args
+    speed = encode_speed if encode_speed in _LIBX264_PRESETS else 'SLOWEST'
+    return [
+        '-c:v', 'libx264',
+        '-preset', _LIBX264_PRESETS[speed],
+        '-crf', '0',
+    ]
 
 
 def default_custom_ffmpeg_args(ffmpeg_path: str, encode_speed: str = 'SLOWEST') -> str:
