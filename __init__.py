@@ -12,6 +12,7 @@ from bpy.types import (Panel, Operator, PropertyGroup, AddonPreferences)  # type
 
 from .rainys_repo_bootstrap import ensure_rainys_extensions_repo
 from .utils import compat as compat_utils
+from .utils import encode as encode_utils
 
 # Pre-defined items lists for EnumProperties
 RESOLUTION_MODE_ITEMS = [
@@ -55,15 +56,7 @@ VIDEO_CODEC_ITEMS = [
     ('NONE', "None", "No video codec")
 ]
 
-VIDEO_QUALITY_ITEMS = [
-    ('LOWEST', "Lowest", "Lowest quality"),
-    ('VERYLOW', "Very Low", "Very low quality"),
-    ('LOW', "Low", "Low quality"),
-    ('MEDIUM', "Medium", "Medium quality"),
-    ('HIGH', "High", "High quality"),
-    ('PERC_LOSSLESS', "Perceptually Lossless", "Perceptually lossless quality"),
-    ('LOSSLESS', "Lossless", "Lossless quality"),
-]
+ENCODE_SPEED_ITEMS = encode_utils.ENCODE_SPEED_ITEMS
 
 AUDIO_CODEC_ITEMS = [
     ('AAC', "AAC", "AAC codec"),
@@ -131,19 +124,6 @@ def _resolve_ffmpeg_path():
         except Exception:
             pass
     return "ffmpeg"  # Fallback; will fail with clear error if missing
-
-# Helper function to convert quality enum to FFmpeg CRF value
-def get_ffmpeg_quality(quality_enum):
-    quality_map = {
-        'LOWEST': 'HIGH',        # Lowest quality = High CRF value
-        'VERYLOW': 'HIGH',
-        'LOW': 'MEDIUM', 
-        'MEDIUM': 'MEDIUM',
-        'HIGH': 'LOW',           # High quality = Low CRF value
-        'PERC_LOSSLESS': 'PERC_LOSSLESS',
-        'LOSSLESS': 'LOSSLESS',
-    }
-    return quality_map.get(quality_enum, 'MEDIUM')
 
 # Helper function to detect if audio exists in the scene
 def has_audio_in_scene(scene):
@@ -377,16 +357,24 @@ class BPLProperties(PropertyGroup):
     
     video_codec: EnumProperty(  # type: ignore
         name="Video Codec",
-        description="Codec for video file",
+        description="Codec for Blender's built-in FFMPEG output (legacy direct-video path)",
         items=VIDEO_CODEC_ITEMS,
-        default='H264'
+        default='AV1'
     )
     
-    video_quality: EnumProperty(  # type: ignore
-        name="Quality",
-        description="Quality of the video",
-        items=VIDEO_QUALITY_ITEMS,
-        default='MEDIUM'
+    encode_speed: EnumProperty(  # type: ignore
+        name="Encode Speed",
+        description="Encoder speed preset (CQ/CRF 0 quality is always used)",
+        items=ENCODE_SPEED_ITEMS,
+        default='SLOWEST'
+    )
+    
+    video_bitrate_limit: IntProperty(  # type: ignore
+        name="Bitrate Limit (Mbps)",
+        description="Optional maximum video bitrate in Mbps (0 = no limit)",
+        default=0,
+        min=0,
+        max=500
     )
     
     include_audio: BoolProperty(  # type: ignore
@@ -486,7 +474,7 @@ class BPLProperties(PropertyGroup):
     custom_ffmpeg_args: StringProperty(  # type: ignore
         name="Custom FFmpeg Args",
         description="Custom FFmpeg command line arguments (for advanced users)",
-        default="-c:v h264_nvenc -preset fast -crf 0"
+        default="-c:v av1_nvenc -preset p7 -rc constqp -cq 0"
     )
     
     is_rendering: BoolProperty(  # type: ignore
@@ -1169,7 +1157,7 @@ class BPL_OT_create_playblast(Operator):
             if hasattr(scene.render, 'ffmpeg'):
                 scene.render.ffmpeg.format = props.video_format
                 scene.render.ffmpeg.codec = props.video_codec
-                scene.render.ffmpeg.constant_rate_factor = get_ffmpeg_quality(props.video_quality)
+                scene.render.ffmpeg.constant_rate_factor = 'LOSSLESS'
                 
                 # Audio settings
                 if props.include_audio:
@@ -1572,28 +1560,7 @@ class BPL_OT_create_playblast(Operator):
             
             # Build FFmpeg command using configured settings
             framerate = scene.render.fps / scene.render.fps_base
-            
-            # Get codec and quality settings from props
-            codec_map = {
-                'H264': 'libx264',
-                'H265': 'libx265',
-                'AV1': 'libaom-av1',
-                'MPEG4': 'mpeg4',
-                'FFV1': 'ffv1'
-            }
-            video_codec = codec_map.get(props.video_codec, 'libx264')
-            
-            # Get CRF value from quality
-            crf_map = {
-                'LOWEST': '28',
-                'VERYLOW': '26',
-                'LOW': '23',
-                'MEDIUM': '20',
-                'HIGH': '18',
-                'PERC_LOSSLESS': '15',
-                'LOSSLESS': '0'
-            }
-            crf_value = crf_map.get(props.video_quality, '20')
+            ffmpeg_exe = _resolve_ffmpeg_path()
             
             # Build FFmpeg command with proper structure:
             # 1. All inputs first (video, then audio if present)
@@ -1601,7 +1568,7 @@ class BPL_OT_create_playblast(Operator):
             # Note: FFmpeg's %04d pattern expects frames starting at 0000, but our frames start at frame_start
             # We need to add -start_number to tell FFmpeg the actual starting frame number
             ffmpeg_cmd = [
-                _resolve_ffmpeg_path(), "-y",  # Overwrite output file
+                ffmpeg_exe, "-y",  # Overwrite output file
                 "-framerate", str(framerate),
                 "-start_number", str(self._frame_start),  # Tell FFmpeg the starting frame number
                 "-i", frame_pattern,
@@ -1866,12 +1833,22 @@ class BPL_OT_create_playblast(Operator):
                     self.report({'WARNING'}, "Audio extraction failed. Rendering video without audio.")
             
             # Now add all encoding options after all inputs
+            if props.use_custom_ffmpeg_args and props.custom_ffmpeg_args:
+                import shlex
+                ffmpeg_cmd.extend(shlex.split(props.custom_ffmpeg_args))
+            else:
+                encoder = encode_utils.detect_video_encoder(ffmpeg_exe)
+                print(f"[BasedPlayblast] Using video encoder: {encoder}")
+                ffmpeg_cmd.extend(encode_utils.build_video_encode_args(
+                    ffmpeg_exe,
+                    encode_speed=props.encode_speed,
+                    bitrate_limit_mbps=props.video_bitrate_limit,
+                ))
+
             ffmpeg_cmd.extend([
-                "-c:v", video_codec,
                 "-pix_fmt", "yuv420p",
-                "-crf", crf_value,
             ])
-            
+
             # Add audio encoding options if audio was added
             if audio_file and os.path.exists(audio_file):
                 audio_codec_map = {
@@ -1885,13 +1862,7 @@ class BPL_OT_create_playblast(Operator):
                     "-b:a", f"{props.audio_bitrate}k",
                     "-shortest"  # Ensure video and audio end together
                 ])
-            
-            # Add custom ffmpeg args if provided
-            if props.use_custom_ffmpeg_args and props.custom_ffmpeg_args:
-                import shlex
-                custom_args = shlex.split(props.custom_ffmpeg_args)
-                ffmpeg_cmd.extend(custom_args)
-            
+
             ffmpeg_cmd.append(video_output)
             
             print(f"Converting frames to video...")
@@ -2460,7 +2431,8 @@ class BPL_OT_apply_user_defaults(Operator):
         prefs = context.preferences.addons[__name__].preferences
         props = context.scene.basedplayblast
 
-        props.video_quality = prefs.default_video_quality
+        props.encode_speed = prefs.default_encode_speed
+        props.video_bitrate_limit = prefs.default_video_bitrate_limit
         props.use_custom_ffmpeg_args = prefs.default_use_custom_ffmpeg_args
         props.custom_ffmpeg_args = prefs.default_ffmpeg_args
 
@@ -3401,7 +3373,7 @@ class BPL_OT_apply_blast_settings(Operator):
             if hasattr(scene.render, 'ffmpeg'):
                 scene.render.ffmpeg.format = props.video_format
                 scene.render.ffmpeg.codec = props.video_codec
-                scene.render.ffmpeg.constant_rate_factor = get_ffmpeg_quality(props.video_quality)
+                scene.render.ffmpeg.constant_rate_factor = 'LOSSLESS'
                 
                 # Audio settings
                 if props.include_audio:
@@ -3963,14 +3935,14 @@ class BPL_PT_main_panel(Panel):
             format_box.label(text="Format", icon='FILE_MOVIE')
             col = format_box.column(align=True)
             col.prop(props, "video_format", text="")
-            col.prop(props, "video_codec", text="")
             
             # Custom FFmpeg arguments
             col.prop(props, "use_custom_ffmpeg_args")
             if props.use_custom_ffmpeg_args:
                 col.prop(props, "custom_ffmpeg_args", text="")
             else:
-                col.prop(props, "video_quality", text="")
+                col.prop(props, "encode_speed", text="Speed")
+                col.prop(props, "video_bitrate_limit", text="Bitrate Limit (Mbps)")
             
             col.prop(props, "include_audio")
             if props.include_audio:
@@ -4001,11 +3973,19 @@ class BPL_PT_main_panel(Panel):
 class BPL_AddonPreferences(AddonPreferences):
     bl_idname = __name__
     
-    default_video_quality: EnumProperty(
-        name="Default Video Quality",
-        description="Default quality setting for the add-on. This will be applied on file load.",
-        items=VIDEO_QUALITY_ITEMS,
-        default='PERC_LOSSLESS'
+    default_encode_speed: EnumProperty(
+        name="Default Encode Speed",
+        description="Default encoder speed preset. CQ/CRF 0 is always used for quality.",
+        items=ENCODE_SPEED_ITEMS,
+        default='SLOWEST'
+    )
+
+    default_video_bitrate_limit: IntProperty(
+        name="Default Bitrate Limit (Mbps)",
+        description="Default optional maximum video bitrate (0 = no limit)",
+        default=0,
+        min=0,
+        max=500
     )
 
     default_use_custom_ffmpeg_args: BoolProperty(
@@ -4017,7 +3997,7 @@ class BPL_AddonPreferences(AddonPreferences):
     default_ffmpeg_args: StringProperty(
         name="Default FFmpeg Arguments",
         description="Default custom FFmpeg arguments for advanced users.",
-        default="-c:v h264_nvenc -preset fast -crf 0"
+        default="-c:v av1_nvenc -preset p7 -rc constqp -cq 0"
     )
 
     ffmpeg_path: StringProperty(
@@ -4038,7 +4018,8 @@ class BPL_AddonPreferences(AddonPreferences):
         layout = self.layout
         layout.label(text="BasedPlayblast User Defaults")
         box = layout.box()
-        box.prop(self, "default_video_quality")
+        box.prop(self, "default_encode_speed")
+        box.prop(self, "default_video_bitrate_limit")
         box.prop(self, "default_use_custom_ffmpeg_args")
         box.prop(self, "default_ffmpeg_args")
         box.prop(self, "ffmpeg_path", text="FFmpeg Path (Steam)")
