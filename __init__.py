@@ -13,6 +13,7 @@ from bpy.types import (Panel, Operator, PropertyGroup, AddonPreferences)  # type
 from .rainys_repo_bootstrap import ensure_rainys_extensions_repo
 from .utils import compat as compat_utils
 from .utils import encode as encode_utils
+from .utils import ffmpeg_path as ffmpeg_path_utils
 
 # Pre-defined items lists for EnumProperties
 RESOLUTION_MODE_ITEMS = [
@@ -86,44 +87,8 @@ def get_file_extension(video_format):
         return ".mp4"  # Default to mp4 if unknown
 
 def _resolve_ffmpeg_path():
-    """Resolve ffmpeg executable. Prefer addon pref, then PATH, then Blender's bundled ffmpeg."""
-    try:
-        for addon in (__name__, "basedplayblast", "bl_ext.basedplayblast", "BasedPlayblast"):
-            prefs = bpy.context.preferences.addons.get(addon)
-            if prefs and prefs.preferences and hasattr(prefs.preferences, "ffmpeg_path"):
-                custom = getattr(prefs.preferences, "ffmpeg_path", "").strip()
-                if custom and os.path.isfile(custom):
-                    return custom
-    except Exception:
-        pass
-    exe = shutil.which("ffmpeg")
-    if exe:
-        return exe
-    try:
-        blender_dir = os.path.dirname(bpy.app.binary_path)
-        version_str = f"{bpy.app.version[0]}.{bpy.app.version[1]}"
-        for search_dir in (blender_dir, os.path.join(blender_dir, version_str)):
-            for name in ("ffmpeg.exe", "ffmpeg"):
-                path = os.path.join(search_dir, name)
-                if os.path.isfile(path):
-                    return path
-    except Exception:
-        pass
-    # Common Windows install locations (Steam/launcher often omit PATH)
-    for candidate in (
-        r"C:\ProgramData\chocolatey\bin\ffmpeg.exe",  # Chocolatey
-        r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
-        r"C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe",
-        r"C:\ffmpeg\bin\ffmpeg.exe",
-        os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"), "ffmpeg", "bin", "ffmpeg.exe"),
-        os.path.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"), "ffmpeg", "bin", "ffmpeg.exe"),
-    ):
-        try:
-            if candidate and os.path.isfile(candidate):
-                return candidate
-        except Exception:
-            pass
-    return "ffmpeg"  # Fallback; will fail with clear error if missing
+    """Resolve ffmpeg executable for playblast encoding."""
+    return ffmpeg_path_utils.resolve_ffmpeg_path()
 
 # Helper function to detect if audio exists in the scene
 def has_audio_in_scene(scene):
@@ -1561,6 +1526,7 @@ class BPL_OT_create_playblast(Operator):
             # Build FFmpeg command using configured settings
             framerate = scene.render.fps / scene.render.fps_base
             ffmpeg_exe = _resolve_ffmpeg_path()
+            print(f"[BasedPlayblast] Using ffmpeg: {ffmpeg_exe}")
             
             # Build FFmpeg command with proper structure:
             # 1. All inputs first (video, then audio if present)
@@ -4002,7 +3968,7 @@ class BPL_AddonPreferences(AddonPreferences):
 
     ffmpeg_path: StringProperty(
         name="FFmpeg Path",
-        description="Full path to ffmpeg.exe (e.g. C:\\ffmpeg\\bin\\ffmpeg.exe). Leave blank to use PATH or Blender's bundled ffmpeg. Required when launching Blender from Steam.",
+        description="Optional override for ffmpeg. Leave blank to use the addon-bundled ffmpeg (auto-downloaded on first use if needed).",
         default="",
         subtype='FILE_PATH'
     )
@@ -4022,7 +3988,7 @@ class BPL_AddonPreferences(AddonPreferences):
         box.prop(self, "default_video_bitrate_limit")
         box.prop(self, "default_use_custom_ffmpeg_args")
         box.prop(self, "default_ffmpeg_args")
-        box.prop(self, "ffmpeg_path", text="FFmpeg Path (Steam)")
+        box.prop(self, "ffmpeg_path", text="FFmpeg Override")
 
 def on_load_post(dummy):
     """Applies user defaults after a file is loaded."""
@@ -4062,6 +4028,11 @@ def register():
     )
     bpy.app.handlers.load_post.append(on_load_post)
     ensure_rainys_extensions_repo()
+    try:
+        ffmpeg = ffmpeg_path_utils.resolve_ffmpeg_path()
+        print(f"[BasedPlayblast] Addon loaded; ffmpeg: {ffmpeg}")
+    except Exception as exc:
+        print(f"[BasedPlayblast] Addon loaded; ffmpeg resolve failed: {exc}")
 
 def unregister():
     # Safely remove handler if it exists

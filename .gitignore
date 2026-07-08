@@ -22,3 +22,6 @@ basedplayblast_updater/
 *.swp
 *.swo 
 .specstory/
+
+# Addon-managed ffmpeg binary (auto-downloaded on first use)
+tools/ffmpeg.exe
