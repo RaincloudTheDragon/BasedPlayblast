@@ -48,6 +48,15 @@ const JOB_TYPE = {
 // This is not supported by this job type.
 const videoFormats = ['FFMPEG', 'AVI_RAW', 'AVI_JPEG'];
 
+// Flamenco 3.9+: render output overrides moved from the add-on into job types.
+const py_render_settings = `
+import bpy
+r = bpy.context.scene.render
+r.use_file_extension = True
+r.use_overwrite = False
+r.use_placeholder = False
+`;
+
 function compileJob(job) {
     print("BasedPlayblast job submitted");
     print("job: ", job);
@@ -134,6 +143,7 @@ function authorPlayblastTasks(settings, playblastDir, playblastOutput) {
             argsBefore: [],
             blendfile: settings.blendfile,
             args: baseArgs.concat([
+                "--python-expr", py_render_settings.trim().split("\n").join("; "),
                 "--python-expr", `
 import bpy
 
@@ -156,7 +166,7 @@ if cy and hasattr(cy, 'use_persistent_data'):
                 "--render-format", 'PNG',
                 "--render-frame", chunk.replaceAll("-", "..")
             ])
-        });
+        }, frameCount(chunk));
         
         task.addCommand(renderCommand);
         playblastTasks.push(task);

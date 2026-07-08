@@ -56,6 +56,15 @@ const JOB_TYPE = {
 // This is not supported by this job type.
 const videoFormats = ['FFMPEG', 'AVI_RAW', 'AVI_JPEG'];
 
+// Flamenco 3.9+: render output overrides moved from the add-on into job types.
+const py_render_settings = `
+import bpy
+r = bpy.context.scene.render
+r.use_file_extension = True
+r.use_overwrite = False
+r.use_placeholder = False
+`;
+
 function compileJob(job) {
     print("BasedPlayblast OPTIX GPU job submitted");
     print("job: ", job);
@@ -156,6 +165,8 @@ function authorPlayblastTasks(settings, playblastDir, playblastOutput) {
         "import bpy; bpy.context.scene.cycles.device = 'GPU'",
         '--python-expr',
         "import bpy; sc=bpy.context.scene; cy=getattr(sc,'cycles',None);\nif cy and hasattr(cy,'use_persistent_data'): cy.use_persistent_data = True",
+        '--python-expr',
+        py_render_settings.trim().split('\n').join('; '),
         '--render-output',
         path.join(playblastDir, path.basename(playblastOutput)),
         '--render-format',
@@ -199,7 +210,7 @@ function authorPlayblastTasks(settings, playblastDir, playblastOutput) {
                 '--render-frame',
                 chunk.replaceAll("-", "..") // Convert to Blender frame range notation.
             ])
-        });
+        }, frameCount(chunk));
         
         task.addCommand(renderCommand);
         playblastTasks.push(task);
@@ -277,9 +288,9 @@ import sys
 import shutil
 import time
 
-# Get the path to clean up
-cleanup_pattern = "${inputGlob.replace(/\\/g, '\\\\')}"
-job_folder = "${playblastDir.replace(/\\/g, '\\\\')}"
+# Get the path to clean up (forward slashes avoid Python \\r \\b \\t escapes on Windows)
+cleanup_pattern = "${inputGlob.replace(/\\/g, '/')}"
+job_folder = "${playblastDir.replace(/\\/g, '/')}"
 print(f"Cleaning up temporary frames: {cleanup_pattern}")
 
 # Find all matching files
