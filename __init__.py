@@ -2386,6 +2386,34 @@ class BPL_OT_sync_file_name(Operator):
         self.report({'INFO'}, f"File name synced with Blender's output file name")
         return {'FINISHED'}
 
+# Operator to set output path and file name from the current blend file
+class BPL_OT_sync_from_blend_file(Operator):
+    bl_idname = "bpl.sync_from_blend_file"
+    bl_label = "Set from Blend File"
+    bl_description = "Set output path and file name from the current blend file"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        blend_path = bpy.data.filepath
+        if not blend_path:
+            self.report({'WARNING'}, "Save the blend file first")
+            return {'CANCELLED'}
+
+        props = context.scene.basedplayblast
+        props.output_path = "//blast/"
+
+        file_name = os.path.splitext(os.path.basename(blend_path))[0]
+        if not file_name:
+            file_name = "blast_"
+        elif not file_name.startswith("blast_"):
+            file_name = "blast_" + file_name
+
+        props.file_name = file_name
+        props.last_playblast_file = ""
+
+        self.report({'INFO'}, f"Output set from blend file: {file_name}")
+        return {'FINISHED'}
+
 # New operator to apply user defaults
 class BPL_OT_apply_user_defaults(Operator):
     bl_idname = "bpl.apply_user_defaults"
@@ -3839,9 +3867,10 @@ class BPL_PT_main_panel(Panel):
         row.prop(props, "output_path")
         row.operator("bpl.sync_output_path", text="", icon='FILE_REFRESH')
         
-        # File name with sync button
+        # File name with sync buttons
         row = box.row(align=True)
         row.prop(props, "file_name")
+        row.operator("bpl.sync_from_blend_file", text="", icon='FILE_BLEND')
         row.operator("bpl.sync_file_name", text="", icon='FILE_REFRESH')
         
         # MOVED BUTTONS: Add the settings apply/restore buttons here, after output settings
@@ -4009,6 +4038,7 @@ classes = (
     BPL_OT_view_latest_playblast,
     BPL_OT_sync_output_path,
     BPL_OT_sync_file_name,
+    BPL_OT_sync_from_blend_file,
     BPL_OT_apply_user_defaults,
     BPL_OT_apply_blast_settings,
     BPL_OT_restore_original_settings,
