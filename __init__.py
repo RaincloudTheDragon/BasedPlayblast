@@ -90,6 +90,106 @@ def _resolve_ffmpeg_path():
     """Resolve ffmpeg executable for playblast encoding."""
     return ffmpeg_path_utils.resolve_ffmpeg_path()
 
+
+FLAMENCO_JOB_BASEDPLAYBLAST = "BasedPlayblast"
+FLAMENCO_JOB_OPTIX = "BasedPlayblast_Optix_GPU"
+
+
+def _flamenco_saves_active_blend() -> bool:
+    """BATv2 (Blender 5.1+) saves the active blend; BATv1 uses a separate .flamenco.blend."""
+    return bpy.app.version >= (5, 1, 0)
+
+
+def _get_bpl_addon_preferences(context):
+    for addon_name in (
+        __name__,
+        "BasedPlayblast",
+        "basedplayblast",
+        "bl_ext.basedplayblast",
+        "bl_ext.user_local.basedplayblast",
+    ):
+        addon = context.preferences.addons.get(addon_name)
+        if addon and addon.preferences:
+            return addon.preferences
+    return None
+
+
+def _flamenco_available_job_type_ids() -> list[str]:
+    """Read job type IDs from Flamenco's dynamic enum (RNA enum_items is unreliable)."""
+    try:
+        from flamenco import job_types as flamenco_job_types
+
+        return [
+            item[0]
+            for item in flamenco_job_types._job_type_enum_items
+            if item[0] != "-"
+        ]
+    except Exception as exc:
+        print(f"[BasedPlayblast] Could not read Flamenco job types: {exc}")
+        return []
+
+
+def _flamenco_job_type_available(scene, job_type_id: str) -> bool:
+    available = _flamenco_available_job_type_ids()
+    if job_type_id in available:
+        return True
+    print(f"[BasedPlayblast] Job type '{job_type_id}' not available. Available: {available}")
+    return False
+
+
+def _flamenco_set_job_type(scene, job_type_id: str) -> bool:
+    """Assign scene.flamenco_job_type, returning False if the ID is not registered."""
+    try:
+        scene.flamenco_job_type = job_type_id
+        return True
+    except TypeError:
+        available = _flamenco_available_job_type_ids()
+        print(
+            f"[BasedPlayblast] Could not set job type '{job_type_id}'. "
+            f"Available: {available}"
+        )
+        return False
+
+
+def _resolve_flamenco_job_type(scene, prefs) -> str:
+    """Pick Flamenco job type from render engine after blast settings are applied."""
+    engine = scene.render.engine
+    if engine == "CYCLES":
+        use_optix = True
+        if prefs and hasattr(prefs, "use_flamenco_optix_for_cycles"):
+            use_optix = prefs.use_flamenco_optix_for_cycles
+        return FLAMENCO_JOB_OPTIX if use_optix else FLAMENCO_JOB_BASEDPLAYBLAST
+    return FLAMENCO_JOB_BASEDPLAYBLAST
+
+
+def _flamenco_send_confirm_message() -> str:
+    if _flamenco_saves_active_blend():
+        return (
+            "Submitting will save this blend with temporary blast render settings. "
+            "They are restored after a successful Flamenco submit."
+        )
+    return (
+        "Blast settings apply in-memory for the Flamenco job copy only. "
+        "Your saved blend file on disk will not be overwritten."
+    )
+
+
+def _safe_restore_attr(obj, attr, value) -> bool:
+    try:
+        if hasattr(obj, attr):
+            setattr(obj, attr, value)
+            return True
+    except Exception as exc:
+        print(f"Could not restore {attr}: {exc}")
+    return False
+
+
+def _restore_cycles_settings(cycles, cycles_settings: dict) -> None:
+    print(f"Restoring Cycles settings - samples: {cycles_settings.get('samples', 'unknown')}")
+    for attr, value in cycles_settings.items():
+        _safe_restore_attr(cycles, attr, value)
+    print("Cycles settings restoration completed")
+
 # Helper function to detect if audio exists in the scene
 def has_audio_in_scene(scene):
     """Check if the scene contains any audio sources (sequencer strips or scene sound strips)."""
@@ -2165,64 +2265,7 @@ class BPL_OT_create_playblast(Operator):
                 
                 # SCENE.CYCLES - Always restore Cycles settings if available  
                 if 'cycles' in original and original['cycles']:
-                    cycles_settings = original['cycles']
-                    cycles = scene.cycles
-                    print(f"Restoring ALL Cycles settings - samples: {cycles_settings.get('samples', 'unknown')}")
-                    
-                    # Restore ALL Cycles settings comprehensively
-                    cycles.device = cycles_settings.get('device', cycles.device)
-                    safe_restore(cycles, 'feature_set', cycles_settings.get('feature_set', 'SUPPORTED'))
-                    safe_restore(cycles, 'shading_system', cycles_settings.get('shading_system', 'SVM'))
-                    cycles.samples = cycles_settings.get('samples', cycles.samples)
-                    cycles.preview_samples = cycles_settings.get('preview_samples', cycles.preview_samples)
-                    safe_restore(cycles, 'aa_samples', cycles_settings.get('aa_samples', 4))
-                    safe_restore(cycles, 'preview_aa_samples', cycles_settings.get('preview_aa_samples', 4))
-                    cycles.use_denoising = cycles_settings.get('use_denoising', cycles.use_denoising)
-                    safe_restore(cycles, 'denoiser', cycles_settings.get('denoiser', 'OPENIMAGEDENOISE'))
-                    safe_restore(cycles, 'denoising_input_passes', cycles_settings.get('denoising_input_passes', 'RGB_ALBEDO_NORMAL'))
-                    safe_restore(cycles, 'use_denoising_input_passes', cycles_settings.get('use_denoising_input_passes', True))
-                    safe_restore(cycles, 'denoising_prefilter', cycles_settings.get('denoising_prefilter', 'ACCURATE'))
-                    cycles.use_adaptive_sampling = cycles_settings.get('use_adaptive_sampling', cycles.use_adaptive_sampling)
-                    cycles.adaptive_threshold = cycles_settings.get('adaptive_threshold', cycles.adaptive_threshold)
-                    cycles.adaptive_min_samples = cycles_settings.get('adaptive_min_samples', cycles.adaptive_min_samples)
-                    safe_restore(cycles, 'time_limit', cycles_settings.get('time_limit', 0.0))
-                    safe_restore(cycles, 'use_preview_adaptive_sampling', cycles_settings.get('use_preview_adaptive_sampling', False))
-                    safe_restore(cycles, 'preview_adaptive_threshold', cycles_settings.get('preview_adaptive_threshold', 0.1))
-                    safe_restore(cycles, 'preview_adaptive_min_samples', cycles_settings.get('preview_adaptive_min_samples', 0))
-                    safe_restore(cycles, 'seed', cycles_settings.get('seed', 0))
-                    safe_restore(cycles, 'use_animated_seed', cycles_settings.get('use_animated_seed', False))
-                    safe_restore(cycles, 'sample_clamp_direct', cycles_settings.get('sample_clamp_direct', 0.0))
-                    safe_restore(cycles, 'sample_clamp_indirect', cycles_settings.get('sample_clamp_indirect', 0.0))
-                    cycles.light_sampling_threshold = cycles_settings.get('light_sampling_threshold', cycles.light_sampling_threshold)
-                    safe_restore(cycles, 'sample_all_lights_direct', cycles_settings.get('sample_all_lights_direct', True))
-                    safe_restore(cycles, 'sample_all_lights_indirect', cycles_settings.get('sample_all_lights_indirect', True))
-                    cycles.max_bounces = cycles_settings.get('max_bounces', cycles.max_bounces)
-                    cycles.diffuse_bounces = cycles_settings.get('diffuse_bounces', cycles.diffuse_bounces)
-                    cycles.glossy_bounces = cycles_settings.get('glossy_bounces', cycles.glossy_bounces)
-                    cycles.transmission_bounces = cycles_settings.get('transmission_bounces', cycles.transmission_bounces)
-                    cycles.volume_bounces = cycles_settings.get('volume_bounces', cycles.volume_bounces)
-                    safe_restore(cycles, 'transparent_max_bounces', cycles_settings.get('transparent_max_bounces', 8))
-                    cycles.caustics_reflective = cycles_settings.get('caustics_reflective', cycles.caustics_reflective)
-                    cycles.caustics_refractive = cycles_settings.get('caustics_refractive', cycles.caustics_refractive)
-                    safe_restore(cycles, 'filter_type', cycles_settings.get('filter_type', 'GAUSSIAN'))
-                    safe_restore(cycles, 'filter_width', cycles_settings.get('filter_width', 1.5))
-                    cycles.pixel_filter_width = cycles_settings.get('pixel_filter_width', cycles.pixel_filter_width)
-                    cycles.use_persistent_data = cycles_settings.get('use_persistent_data', cycles.use_persistent_data)
-                    safe_restore(cycles, 'debug_use_spatial_splits', cycles_settings.get('debug_use_spatial_splits', False))
-                    safe_restore(cycles, 'debug_use_hair_bvh', cycles_settings.get('debug_use_hair_bvh', True))
-                    safe_restore(cycles, 'debug_bvh_type', cycles_settings.get('debug_bvh_type', 'DYNAMIC_BVH'))
-                    safe_restore(cycles, 'debug_use_compact_bvh', cycles_settings.get('debug_use_compact_bvh', True))
-                    safe_restore(cycles, 'tile_size', cycles_settings.get('tile_size', 256))
-                    safe_restore(cycles, 'use_auto_tile', cycles_settings.get('use_auto_tile', False))
-                    safe_restore(cycles, 'progressive', cycles_settings.get('progressive', 'PATH'))
-                    safe_restore(cycles, 'use_square_samples', cycles_settings.get('use_square_samples', False))
-                    safe_restore(cycles, 'blur_glossy', cycles_settings.get('blur_glossy', 0.0))
-                    safe_restore(cycles, 'use_transparent_shadows', cycles_settings.get('use_transparent_shadows', True))
-                    safe_restore(cycles, 'volume_step_rate', cycles_settings.get('volume_step_rate', 1.0))
-                    safe_restore(cycles, 'volume_preview_step_rate', cycles_settings.get('volume_preview_step_rate', 1.0))
-                    safe_restore(cycles, 'volume_max_steps', cycles_settings.get('volume_max_steps', 1024))
-                    
-                    print(f"ALL Cycles settings restoration completed")
+                    _restore_cycles_settings(scene.cycles, original['cycles'])
                 
                 # Clear the stored settings
                 props.original_settings = ""
@@ -2413,6 +2456,99 @@ class BPL_OT_sync_from_blend_file(Operator):
 
         self.report({'INFO'}, f"Output set from blend file: {file_name}")
         return {'FINISHED'}
+
+
+class BPL_OT_send_to_flamenco(Operator):
+    bl_idname = "bpl.send_to_flamenco"
+    bl_label = "Send to Flamenco"
+    bl_description = "Apply blast settings, submit to Flamenco, then restore scene settings"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        if not bpy.data.filepath:
+            cls.poll_message_set("Save the blend file first")
+            return False
+        if "flamenco" not in context.preferences.addons:
+            cls.poll_message_set("Flamenco addon is not enabled")
+            return False
+        return True
+
+    def invoke(self, context, event):
+        self.bl_description = _flamenco_send_confirm_message()
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        scene = context.scene
+        original_job_type = getattr(scene, "flamenco_job_type", "-")
+        applied = False
+        submit_succeeded = False
+
+        try:
+            apply_result = bpy.ops.bpl.apply_blast_settings('EXEC_DEFAULT')
+            if 'CANCELLED' in apply_result:
+                return {'CANCELLED'}
+            applied = True
+
+            ping_result = bpy.ops.flamenco.ping_manager()
+            if 'CANCELLED' in ping_result:
+                self.report({'ERROR'}, "Could not reach Flamenco Manager")
+                return {'CANCELLED'}
+
+            prefs = _get_bpl_addon_preferences(context)
+            job_type = _resolve_flamenco_job_type(scene, prefs)
+            if not _flamenco_job_type_available(scene, job_type):
+                self.report(
+                    {'ERROR'},
+                    f"Job type '{job_type}' is not on the Manager. Deploy BasedPlayblast scripts and refresh.",
+                )
+                return {'CANCELLED'}
+
+            if not _flamenco_set_job_type(scene, job_type):
+                self.report(
+                    {'ERROR'},
+                    f"Job type '{job_type}' could not be selected. Refresh from Manager in Flamenco.",
+                )
+                return {'CANCELLED'}
+            print(f"[BasedPlayblast] Flamenco job type set to: {job_type}")
+
+            job_name = getattr(scene, "flamenco_job_name", "").strip()
+            if not job_name:
+                job_name = os.path.splitext(os.path.basename(bpy.data.filepath))[0]
+
+            submit_result = bpy.ops.flamenco.submit_job(
+                job_name=job_name,
+                ignore_version_mismatch=False,
+            )
+            if 'CANCELLED' in submit_result:
+                self.report({'ERROR'}, "Flamenco job submission cancelled or failed")
+                return {'CANCELLED'}
+
+            submit_succeeded = True
+            self.report({'INFO'}, "Flamenco job submitted; restoring scene settings")
+            return {'FINISHED'}
+        finally:
+            if applied:
+                if hasattr(scene, "flamenco_job_type"):
+                    scene.flamenco_job_type = original_job_type
+                restore_ok = False
+                try:
+                    restore_result = bpy.ops.bpl.restore_original_settings('EXEC_DEFAULT')
+                    restore_ok = 'CANCELLED' not in restore_result
+                except RuntimeError as exc:
+                    print(f"[BasedPlayblast] Restore failed: {exc}")
+                if not restore_ok:
+                    self.report({'WARNING'}, "Could not fully restore original render settings")
+                elif submit_succeeded and _flamenco_saves_active_blend():
+                    save_result = bpy.ops.wm.save_mainfile()
+                    if 'CANCELLED' in save_result:
+                        self.report(
+                            {'WARNING'},
+                            "Settings restored in memory but blend could not be saved to disk",
+                        )
+                    else:
+                        print("[BasedPlayblast] Blend saved with restored settings after Flamenco submit")
+
 
 # New operator to apply user defaults
 class BPL_OT_apply_user_defaults(Operator):
@@ -3608,64 +3744,7 @@ class BPL_OT_restore_original_settings(Operator):
                     print(f"ERROR: 'cycles' key not found in original settings! Keys available: {list(original.keys())}")
                 
                 if 'cycles' in original and original['cycles']:
-                    cycles_settings = original['cycles']
-                    cycles = scene.cycles
-                    print(f"Restoring ALL Cycles settings - samples: {cycles_settings.get('samples', 'unknown')}")
-                    
-                    # Restore ALL Cycles settings comprehensively
-                    cycles.device = cycles_settings['device']
-                    safe_restore(cycles, 'feature_set', cycles_settings.get('feature_set', 'SUPPORTED'))
-                    safe_restore(cycles, 'shading_system', cycles_settings.get('shading_system', 'SVM'))
-                    cycles.samples = cycles_settings['samples']
-                    cycles.preview_samples = cycles_settings['preview_samples']
-                    safe_restore(cycles, 'aa_samples', cycles_settings.get('aa_samples', 4))
-                    safe_restore(cycles, 'preview_aa_samples', cycles_settings.get('preview_aa_samples', 4))
-                    cycles.use_denoising = cycles_settings['use_denoising']
-                    safe_restore(cycles, 'denoiser', cycles_settings.get('denoiser', 'OPENIMAGEDENOISE'))
-                    safe_restore(cycles, 'denoising_input_passes', cycles_settings.get('denoising_input_passes', 'RGB_ALBEDO_NORMAL'))
-                    safe_restore(cycles, 'use_denoising_input_passes', cycles_settings.get('use_denoising_input_passes', True))
-                    safe_restore(cycles, 'denoising_prefilter', cycles_settings.get('denoising_prefilter', 'ACCURATE'))
-                    cycles.use_adaptive_sampling = cycles_settings['use_adaptive_sampling']
-                    cycles.adaptive_threshold = cycles_settings['adaptive_threshold']
-                    cycles.adaptive_min_samples = cycles_settings['adaptive_min_samples']
-                    safe_restore(cycles, 'time_limit', cycles_settings.get('time_limit', 0.0))
-                    safe_restore(cycles, 'use_preview_adaptive_sampling', cycles_settings.get('use_preview_adaptive_sampling', False))
-                    safe_restore(cycles, 'preview_adaptive_threshold', cycles_settings.get('preview_adaptive_threshold', 0.1))
-                    safe_restore(cycles, 'preview_adaptive_min_samples', cycles_settings.get('preview_adaptive_min_samples', 0))
-                    safe_restore(cycles, 'seed', cycles_settings.get('seed', 0))
-                    safe_restore(cycles, 'use_animated_seed', cycles_settings.get('use_animated_seed', False))
-                    safe_restore(cycles, 'sample_clamp_direct', cycles_settings.get('sample_clamp_direct', 0.0))
-                    safe_restore(cycles, 'sample_clamp_indirect', cycles_settings.get('sample_clamp_indirect', 0.0))
-                    cycles.light_sampling_threshold = cycles_settings['light_sampling_threshold']
-                    safe_restore(cycles, 'sample_all_lights_direct', cycles_settings.get('sample_all_lights_direct', True))
-                    safe_restore(cycles, 'sample_all_lights_indirect', cycles_settings.get('sample_all_lights_indirect', True))
-                    cycles.max_bounces = cycles_settings['max_bounces']
-                    cycles.diffuse_bounces = cycles_settings['diffuse_bounces']
-                    cycles.glossy_bounces = cycles_settings['glossy_bounces']
-                    cycles.transmission_bounces = cycles_settings['transmission_bounces']
-                    cycles.volume_bounces = cycles_settings['volume_bounces']
-                    safe_restore(cycles, 'transparent_max_bounces', cycles_settings.get('transparent_max_bounces', 8))
-                    cycles.caustics_reflective = cycles_settings['caustics_reflective']
-                    cycles.caustics_refractive = cycles_settings['caustics_refractive']
-                    safe_restore(cycles, 'filter_type', cycles_settings.get('filter_type', 'GAUSSIAN'))
-                    safe_restore(cycles, 'filter_width', cycles_settings.get('filter_width', 1.5))
-                    cycles.pixel_filter_width = cycles_settings['pixel_filter_width']
-                    cycles.use_persistent_data = cycles_settings['use_persistent_data']
-                    safe_restore(cycles, 'debug_use_spatial_splits', cycles_settings.get('debug_use_spatial_splits', False))
-                    safe_restore(cycles, 'debug_use_hair_bvh', cycles_settings.get('debug_use_hair_bvh', True))
-                    safe_restore(cycles, 'debug_bvh_type', cycles_settings.get('debug_bvh_type', 'DYNAMIC_BVH'))
-                    safe_restore(cycles, 'debug_use_compact_bvh', cycles_settings.get('debug_use_compact_bvh', True))
-                    safe_restore(cycles, 'tile_size', cycles_settings.get('tile_size', 256))
-                    safe_restore(cycles, 'use_auto_tile', cycles_settings.get('use_auto_tile', False))
-                    safe_restore(cycles, 'progressive', cycles_settings.get('progressive', 'PATH'))
-                    safe_restore(cycles, 'use_square_samples', cycles_settings.get('use_square_samples', False))
-                    safe_restore(cycles, 'blur_glossy', cycles_settings.get('blur_glossy', 0.0))
-                    safe_restore(cycles, 'use_transparent_shadows', cycles_settings.get('use_transparent_shadows', True))
-                    safe_restore(cycles, 'volume_step_rate', cycles_settings.get('volume_step_rate', 1.0))
-                    safe_restore(cycles, 'volume_preview_step_rate', cycles_settings.get('volume_preview_step_rate', 1.0))
-                    safe_restore(cycles, 'volume_max_steps', cycles_settings.get('volume_max_steps', 1024))
-                    
-                    print(f"ALL Cycles settings restoration completed")
+                    _restore_cycles_settings(scene.cycles, original['cycles'])
                     
                 # SCENE.EEVEE - Always restore EEVEE settings if available
                 if 'eevee' in original and original['eevee']:
@@ -3851,6 +3930,7 @@ class BPL_PT_main_panel(Panel):
         row.scale_y = 1.5
         row.operator("bpl.create_playblast", text="PLAYBLAST", icon='RENDER_ANIMATION')
         row.operator("bpl.view_playblast", text="VIEW", icon='PLAY')
+        row.operator("bpl.send_to_flamenco", text="FLAMENCO", icon='EXPORT')
         
         # Show progress if rendering
         if props.is_rendering:
@@ -3873,14 +3953,24 @@ class BPL_PT_main_panel(Panel):
         row.operator("bpl.sync_from_blend_file", text="", icon='FILE_BLEND')
         row.operator("bpl.sync_file_name", text="", icon='FILE_REFRESH')
         
-        # MOVED BUTTONS: Add the settings apply/restore buttons here, after output settings
+        # Advanced - manual apply/restore for power users
         layout.separator()
-        
-        # Settings apply/restore buttons
-        row = layout.row(align=True)
-        row.scale_y = 1.2
-        row.operator("bpl.apply_blast_settings", text="Apply Blast Render Settings", icon='GREASEPENCIL')
-        row.operator("bpl.restore_original_settings", text="Restore Original Settings", icon='LOOP_BACK')
+        advanced_box = layout.box()
+        row = advanced_box.row(align=True)
+        show_advanced = getattr(context.scene, "basedplayblast_show_advanced", False)
+        row.prop(
+            context.scene,
+            "basedplayblast_show_advanced",
+            icon="TRIA_DOWN" if show_advanced else "TRIA_RIGHT",
+            icon_only=True,
+            emboss=False,
+        )
+        row.label(text="Advanced")
+        if show_advanced:
+            row = advanced_box.row(align=True)
+            row.scale_y = 1.2
+            row.operator("bpl.apply_blast_settings", text="Apply Blast Render Settings", icon='GREASEPENCIL')
+            row.operator("bpl.restore_original_settings", text="Restore Original Settings", icon='LOOP_BACK')
         
         # Properties - single collapsible section
         props_box = layout.box()
@@ -4002,6 +4092,12 @@ class BPL_AddonPreferences(AddonPreferences):
         subtype='FILE_PATH'
     )
 
+    use_flamenco_optix_for_cycles: BoolProperty(
+        name="Use OPTIX GPU Job for Cycles",
+        description="When sending Cycles playblasts to Flamenco, select BasedPlayblast OPTIX GPU job type",
+        default=True,
+    )
+
     repo_initialized: BoolProperty(
         name="Rainy's Extensions Added",
         description="Internal flag to avoid re-adding Rainy's Extensions repository multiple times.",
@@ -4018,6 +4114,7 @@ class BPL_AddonPreferences(AddonPreferences):
         box.prop(self, "default_use_custom_ffmpeg_args")
         box.prop(self, "default_ffmpeg_args")
         box.prop(self, "ffmpeg_path", text="FFmpeg Override")
+        box.prop(self, "use_flamenco_optix_for_cycles")
 
 def on_load_post(dummy):
     """Applies user defaults after a file is loaded."""
@@ -4039,6 +4136,7 @@ classes = (
     BPL_OT_sync_output_path,
     BPL_OT_sync_file_name,
     BPL_OT_sync_from_blend_file,
+    BPL_OT_send_to_flamenco,
     BPL_OT_apply_user_defaults,
     BPL_OT_apply_blast_settings,
     BPL_OT_restore_original_settings,
@@ -4054,6 +4152,10 @@ def register():
     # Register property for collapsible properties section
     bpy.types.Scene.basedplayblast_show_properties = BoolProperty(
         name="Show Properties",
+        default=False
+    )
+    bpy.types.Scene.basedplayblast_show_advanced = BoolProperty(
+        name="Show Advanced",
         default=False
     )
     bpy.app.handlers.load_post.append(on_load_post)
@@ -4072,6 +4174,8 @@ def unregister():
     # Unregister property for collapsible properties section
     if hasattr(bpy.types.Scene, 'basedplayblast_show_properties'):
         del bpy.types.Scene.basedplayblast_show_properties
+    if hasattr(bpy.types.Scene, 'basedplayblast_show_advanced'):
+        del bpy.types.Scene.basedplayblast_show_advanced
     
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
