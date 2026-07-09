@@ -1,3 +1,13 @@
+# v2.7.0
+    - **Send to Flamenco** operator: BATv2-safe apply → submit → restore; blend re-save on Blender 5.1+ only; Advanced panel for manual apply/restore
+    - **Set from blend file** button: sync output path and filename from the saved `.blend`
+    - AV1/NVENC encode fix: VBR + CQ 0 (not `constqp -cq 0`); uncapped when bitrate limit is 0
+    - FFmpeg accessibility: addon-bundled binary with bootstrap download; fallbacks avoid Chocolatey PATH
+    - Encode defaults (#13): NVENC VBR + CQ 0, encode speed + optional bitrate cap; removed quality presets
+    - Local temp frames (#11): intermediate PNGs in system temp, cleaned up after encode
+    - Flamenco 3.9 job scripts (#12): `py_render_settings`, forward-slash cleanup paths
+    - Default Flamenco script deploy path: `F:\software\Flamenco\scripts`
+
 # v2.6.3
     - Bugfix: fix ffmpeg inaccessibility by adding fallbacks and a preference
 

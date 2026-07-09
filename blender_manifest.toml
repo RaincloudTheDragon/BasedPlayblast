@@ -3,7 +3,7 @@ schema_version = "1.0.0"
 id = "basedplayblast"
 name = "BasedPlayblast"
 tagline = "Easily create playblasts from Blender and Flamenco"
-version = "2.6.3"
+version = "2.7.0"
 type = "add-on"
 
 maintainer = "RaincloudTheDragon <raincloudthedragon@gmail.com>"
