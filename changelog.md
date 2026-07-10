@@ -1,3 +1,6 @@
+# v2.7.1 2026-07-10
+    - Default audio codec MP3 (#14); configurable in add-on preferences
+
 # v2.7.0
     - **Send to Flamenco** operator: BATv2-safe apply → submit → restore; blend re-save on Blender 5.1+ only; Advanced panel for manual apply/restore
     - **Set from blend file** button: sync output path and filename from the saved `.blend`
