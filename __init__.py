@@ -60,9 +60,9 @@ VIDEO_CODEC_ITEMS = [
 ENCODE_SPEED_ITEMS = encode_utils.ENCODE_SPEED_ITEMS
 
 AUDIO_CODEC_ITEMS = [
+    ('MP3', "MP3", "MP3 codec"),
     ('AAC', "AAC", "AAC codec"),
     ('AC3', "AC3", "AC3 codec"),
-    ('MP3', "MP3", "MP3 codec"),
     ('NONE', "None", "No audio codec")
 ]
 
@@ -452,7 +452,7 @@ class BPLProperties(PropertyGroup):
         name="Audio Codec",
         description="Codec for audio",
         items=AUDIO_CODEC_ITEMS,
-        default='AAC'
+        default='MP3'
     )
     
     audio_bitrate: IntProperty(  # type: ignore
@@ -1922,7 +1922,7 @@ class BPL_OT_create_playblast(Operator):
                     'AC3': 'ac3',
                     'MP3': 'mp3'
                 }
-                audio_codec = audio_codec_map.get(props.audio_codec, 'aac')
+                audio_codec = audio_codec_map.get(props.audio_codec, 'mp3')
                 ffmpeg_cmd.extend([
                     "-c:a", audio_codec,
                     "-b:a", f"{props.audio_bitrate}k",
@@ -2565,6 +2565,7 @@ class BPL_OT_apply_user_defaults(Operator):
         props.video_bitrate_limit = prefs.default_video_bitrate_limit
         props.use_custom_ffmpeg_args = prefs.default_use_custom_ffmpeg_args
         props.custom_ffmpeg_args = prefs.default_ffmpeg_args
+        props.audio_codec = prefs.default_audio_codec
 
         self.report({'INFO'}, "User defaults applied to scene.")
         return {'FINISHED'}
@@ -4073,6 +4074,13 @@ class BPL_AddonPreferences(AddonPreferences):
         max=500
     )
 
+    default_audio_codec: EnumProperty(
+        name="Default Audio Codec",
+        description="Default audio codec when including audio in playblasts",
+        items=AUDIO_CODEC_ITEMS,
+        default='MP3',
+    )
+
     default_use_custom_ffmpeg_args: BoolProperty(
         name="Enable Custom FFmpeg By Default",
         description="Sets the default state for 'Use Custom FFmpeg Args' when applying user defaults.",
@@ -4111,6 +4119,7 @@ class BPL_AddonPreferences(AddonPreferences):
         box = layout.box()
         box.prop(self, "default_encode_speed")
         box.prop(self, "default_video_bitrate_limit")
+        box.prop(self, "default_audio_codec")
         box.prop(self, "default_use_custom_ffmpeg_args")
         box.prop(self, "default_ffmpeg_args")
         box.prop(self, "ffmpeg_path", text="FFmpeg Override")
