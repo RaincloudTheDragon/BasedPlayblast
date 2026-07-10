@@ -14,6 +14,7 @@ from .rainys_repo_bootstrap import ensure_rainys_extensions_repo
 from .utils import compat as compat_utils
 from .utils import encode as encode_utils
 from .utils import ffmpeg_path as ffmpeg_path_utils
+from .utils import flamenco_deploy as flamenco_deploy_utils
 
 # Pre-defined items lists for EnumProperties
 RESOLUTION_MODE_ITEMS = [
@@ -2497,6 +2498,45 @@ class BPL_OT_sync_from_blend_file(Operator):
         return {'FINISHED'}
 
 
+class BPL_OT_deploy_flamenco_scripts(Operator):
+    bl_idname = "bpl.deploy_flamenco_scripts"
+    bl_label = "Deploy Flamenco Scripts"
+    bl_description = "Copy BasedPlayblast job scripts to the Flamenco Manager scripts folder"
+    bl_options = {'REGISTER'}
+
+    directory: StringProperty(  # type: ignore
+        name="Flamenco Manager Directory",
+        description="Directory containing flamenco-manager.yaml",
+        subtype='DIR_PATH',
+    )
+
+    def invoke(self, context, event):
+        prefs = _get_bpl_addon_preferences(context)
+        if prefs and prefs.flamenco_manager_dir:
+            self.directory = prefs.flamenco_manager_dir
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        if not self.directory:
+            self.report({'WARNING'}, "No directory selected")
+            return {'CANCELLED'}
+
+        manager_dir = bpy.path.abspath(self.directory)
+        ok, message, _copied, restart, _version = flamenco_deploy_utils.deploy_scripts(manager_dir)
+        if not ok:
+            self.report({'ERROR'}, message)
+            return {'CANCELLED'}
+
+        prefs = _get_bpl_addon_preferences(context)
+        if prefs:
+            prefs.flamenco_manager_dir = manager_dir
+
+        self.report({'WARNING' if restart else 'INFO'}, message)
+        print(f"[BasedPlayblast] {message}")
+        return {'FINISHED'}
+
+
 class BPL_OT_send_to_flamenco(Operator):
     bl_idname = "bpl.send_to_flamenco"
     bl_label = "Send to Flamenco"
@@ -4186,6 +4226,13 @@ class BPL_AddonPreferences(AddonPreferences):
         default=True,
     )
 
+    flamenco_manager_dir: StringProperty(
+        name="Flamenco Manager Directory",
+        description="Directory containing flamenco-manager.yaml (set via Deploy Flamenco Scripts)",
+        default="",
+        subtype='DIR_PATH',
+    )
+
     repo_initialized: BoolProperty(
         name="Rainy's Extensions Added",
         description="Internal flag to avoid re-adding Rainy's Extensions repository multiple times.",
@@ -4206,6 +4253,8 @@ class BPL_AddonPreferences(AddonPreferences):
         box.prop(self, "show_flamenco_button")
         if self.show_flamenco_button:
             box.prop(self, "use_flamenco_optix_for_cycles")
+            box.prop(self, "flamenco_manager_dir", text="Manager Path")
+            box.operator("bpl.deploy_flamenco_scripts", icon='FILE_SCRIPT')
 
 def on_load_post(dummy):
     """Applies user defaults after a file is loaded."""
@@ -4227,6 +4276,7 @@ classes = (
     BPL_OT_sync_output_path,
     BPL_OT_sync_file_name,
     BPL_OT_sync_from_blend_file,
+    BPL_OT_deploy_flamenco_scripts,
     BPL_OT_send_to_flamenco,
     BPL_OT_apply_user_defaults,
     BPL_OT_apply_blast_settings,
