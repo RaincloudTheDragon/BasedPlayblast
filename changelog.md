@@ -1,3 +1,8 @@
+# v2.8.0
+    - UI overhaul: quick-setting rows (shading, audio, metadata), Properties layout, default output toggle, optional Flamenco button
+    - Flamenco script deployer: pick Manager directory, validate `flamenco-manager.yaml`, copy scripts to `scripts/`
+    - UI: separator between action buttons and quick settings
+
 # v2.7.1 2026-07-10
     - Default audio codec MP3 (#14); configurable in add-on preferences
 
