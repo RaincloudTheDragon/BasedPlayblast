@@ -4051,6 +4051,8 @@ class BPL_PT_main_panel(Panel):
             box.label(text=props.status_message)
             box.prop(props, "render_progress", text="Progress", slider=True)
 
+        layout.separator()
+
         layout.use_property_decorate = False
         _draw_equal_cells_row(layout, props)
         _draw_full_width_toggle_row(layout, props)
