@@ -42,10 +42,10 @@ FILE_FORMAT_ITEMS = [
 ]
 
 VIDEO_FORMAT_ITEMS = [
-    ('MPEG4', "MP4", "Standard container format with wide compatibility"),
-    ('QUICKTIME', "QuickTime (MOV)", "Professional container format"),
-    ('AVI', "AVI", "Classic container format"),
-    ('MKV', "Matroska (MKV)", "Open source container with wide codec support")
+    ('MPEG4', "MP4", "MP4 — Standard container format with wide compatibility"),
+    ('QUICKTIME', "QuickTime (MOV)", "QuickTime (MOV) — Professional container format"),
+    ('AVI', "AVI", "AVI — Classic container format"),
+    ('MKV', "Matroska (MKV)", "Matroska (MKV) — Open source container with wide codec support")
 ]
 
 VIDEO_CODEC_ITEMS = [
@@ -67,10 +67,10 @@ AUDIO_CODEC_ITEMS = [
 ]
 
 DISPLAY_MODE_ITEMS = [
-    ('WIREFRAME', "Wireframe", "Display the wireframe"),
-    ('SOLID', "Solid", "Display solid shading"),
-    ('MATERIAL', "Material", "Display material preview"),
-    ('RENDERED', "Rendered", "Display rendered preview")
+    ('WIREFRAME', "Wireframe", "Display the wireframe", 'SHADING_WIRE', 0),
+    ('SOLID', "Solid", "Display solid shading", 'SHADING_SOLID', 1),
+    ('MATERIAL', "Material", "Display material preview", 'SHADING_TEXTURE', 2),
+    ('RENDERED', "Rendered", "Display rendered preview", 'SHADING_RENDERED', 3),
 ]
 
 # Helper function to get file extension based on video format
@@ -318,6 +318,42 @@ def get_cameras(self, context) -> list[tuple[str, str, str]]:
     
     return cameras
 
+def _apply_output_from_blend_file(context, *, clear_last_playblast=True) -> bool:
+    """Set //blast/ and blast_<stem> from the saved blend file. Returns False if unsaved."""
+    props = context.scene.basedplayblast
+    blend_path = bpy.data.filepath
+    if blend_path:
+        target = bpy.path.abspath("//blast/")
+        if not target.endswith(os.sep):
+            target += os.sep
+        props.output_path = target
+    elif not props.output_path:
+        props.output_path = "//blast/"
+
+    if not blend_path:
+        props.file_name = "blast_"
+        if clear_last_playblast:
+            props.last_playblast_file = ""
+        return False
+
+    file_name = os.path.splitext(os.path.basename(blend_path))[0]
+    if not file_name:
+        file_name = "blast_"
+    elif not file_name.startswith("blast_"):
+        file_name = "blast_" + file_name
+
+    props.file_name = file_name
+    if clear_last_playblast:
+        props.last_playblast_file = ""
+    return True
+
+
+def _update_use_default_output(self, context):
+    if not self.use_default_output or context is None:
+        return
+    _apply_output_from_blend_file(context)
+
+
 # Main Properties class
 class BPLProperties(PropertyGroup):
     output_path: StringProperty(  # type: ignore
@@ -331,6 +367,13 @@ class BPLProperties(PropertyGroup):
         name="File Name",
         description="Base name for the playblast files",
         default="blast_"
+    )
+
+    use_default_output: BoolProperty(  # type: ignore
+        name="Default Output",
+        description="Use //blast/ and blast_<blendname> from the saved blend file",
+        default=True,
+        update=_update_use_default_output,
     )
     
     last_playblast_file: StringProperty(  # type: ignore
@@ -887,6 +930,9 @@ class BPL_OT_create_playblast(Operator):
     def invoke(self, context, event):
         scene = context.scene
         props = scene.basedplayblast
+
+        if props.use_default_output:
+            _apply_output_from_blend_file(context, clear_last_playblast=False)
         
         # DEBUG: Check engine at very start
         print(f"DEBUG: Engine at very start of invoke: {scene.render.engine}")
@@ -2442,19 +2488,12 @@ class BPL_OT_sync_from_blend_file(Operator):
             self.report({'WARNING'}, "Save the blend file first")
             return {'CANCELLED'}
 
+        if not _apply_output_from_blend_file(context):
+            self.report({'WARNING'}, "Save the blend file first")
+            return {'CANCELLED'}
+
         props = context.scene.basedplayblast
-        props.output_path = "//blast/"
-
-        file_name = os.path.splitext(os.path.basename(blend_path))[0]
-        if not file_name:
-            file_name = "blast_"
-        elif not file_name.startswith("blast_"):
-            file_name = "blast_" + file_name
-
-        props.file_name = file_name
-        props.last_playblast_file = ""
-
-        self.report({'INFO'}, f"Output set from blend file: {file_name}")
+        self.report({'INFO'}, f"Output set from blend file: {props.file_name}")
         return {'FINISHED'}
 
 
@@ -2480,6 +2519,10 @@ class BPL_OT_send_to_flamenco(Operator):
 
     def execute(self, context):
         scene = context.scene
+        props = scene.basedplayblast
+        if props.use_default_output:
+            _apply_output_from_blend_file(context, clear_last_playblast=False)
+
         original_job_type = getattr(scene, "flamenco_job_type", "-")
         applied = False
         submit_succeeded = False
@@ -3911,6 +3954,35 @@ class BPL_OT_restore_original_settings(Operator):
             self.report({'ERROR'}, f"Error restoring settings: {str(e)}")
             return {'CANCELLED'}
 
+_DISPLAY_MODE_UI = (
+    ("WIREFRAME", "Wire"),
+    ("SOLID", "Solid"),
+    ("MATERIAL", "Mat"),
+    ("RENDERED", "Render"),
+)
+
+
+def _draw_equal_cells_row(layout, props):
+    """Flat prop_enum row with short labels — same pattern as the .mp4/.mov encode row."""
+    row = layout.row(align=True)
+    row.use_property_split = False
+    row.use_property_decorate = False
+    row.scale_y = 1.5
+    for mode, label in _DISPLAY_MODE_UI:
+        row.prop_enum(props, "display_mode", mode, text=label)
+
+
+def _draw_full_width_toggle_row(layout, props):
+    """Flat prop row with short labels — fills width like encode settings."""
+    row = layout.row(align=True)
+    row.use_property_split = False
+    row.use_property_decorate = False
+    row.scale_y = 1.5
+    row.prop(props, "include_audio", text="Audio", toggle=True, icon='OUTLINER_DATA_SPEAKER')
+    row.separator(factor=0.15)
+    row.prop(props, "show_metadata", text="Meta", toggle=True, icon='TEXT')
+
+
 # UI Panel
 class BPL_PT_main_panel(Panel):
     bl_label = "BasedPlayblast"
@@ -3925,135 +3997,137 @@ class BPL_PT_main_panel(Panel):
         layout = self.layout
         scene = context.scene
         props = scene.basedplayblast
-        
-        # Main buttons - now integrated with output settings
+        prefs = _get_bpl_addon_preferences(context)
+
         row = layout.row(align=True)
         row.scale_y = 1.5
         row.operator("bpl.create_playblast", text="PLAYBLAST", icon='RENDER_ANIMATION')
         row.operator("bpl.view_playblast", text="VIEW", icon='PLAY')
-        row.operator("bpl.send_to_flamenco", text="FLAMENCO", icon='EXPORT')
-        
-        # Show progress if rendering
+        if not prefs or prefs.show_flamenco_button:
+            row.operator("bpl.send_to_flamenco", text="FLAMENCO", icon='EXPORT')
+
         if props.is_rendering:
             box = layout.box()
             box.label(text=props.status_message)
             box.prop(props, "render_progress", text="Progress", slider=True)
-        
-        # Output settings - always visible
-        box = layout.box()
-        box.label(text="Output Settings")
-        
-        # Output path with sync button
-        row = box.row(align=True)
-        row.prop(props, "output_path")
-        row.operator("bpl.sync_output_path", text="", icon='FILE_REFRESH')
-        
-        # File name with sync buttons
-        row = box.row(align=True)
-        row.prop(props, "file_name")
-        row.operator("bpl.sync_from_blend_file", text="", icon='FILE_BLEND')
-        row.operator("bpl.sync_file_name", text="", icon='FILE_REFRESH')
-        
-        # Advanced - manual apply/restore for power users
-        layout.separator()
-        advanced_box = layout.box()
-        row = advanced_box.row(align=True)
-        show_advanced = getattr(context.scene, "basedplayblast_show_advanced", False)
+
+        layout.use_property_decorate = False
+        _draw_equal_cells_row(layout, props)
+        _draw_full_width_toggle_row(layout, props)
+
+        props_box = layout.box()
+        row = props_box.row(align=True)
+        show_props = getattr(scene, "basedplayblast_show_properties", False)
         row.prop(
-            context.scene,
-            "basedplayblast_show_advanced",
-            icon="TRIA_DOWN" if show_advanced else "TRIA_RIGHT",
+            scene,
+            "basedplayblast_show_properties",
+            icon="TRIA_DOWN" if show_props else "TRIA_RIGHT",
             icon_only=True,
             emboss=False,
         )
-        row.label(text="Advanced")
-        if show_advanced:
-            row = advanced_box.row(align=True)
-            row.scale_y = 1.2
-            row.operator("bpl.apply_blast_settings", text="Apply Blast Render Settings", icon='GREASEPENCIL')
-            row.operator("bpl.restore_original_settings", text="Restore Original Settings", icon='LOOP_BACK')
-        
-        # Properties - single collapsible section
-        props_box = layout.box()
-        row = props_box.row(align=True)
-        show_props = getattr(context.scene, "basedplayblast_show_properties", False)
-        row.prop(context.scene, "basedplayblast_show_properties", icon="TRIA_DOWN" if show_props else "TRIA_RIGHT", icon_only=True, emboss=False)
         row.label(text="Properties")
         row.operator("bpl.apply_user_defaults", text="", icon='PREFERENCES')
-        
+
         if show_props:
-            # 1. Display Mode
-            display_box = props_box.box()
-            display_box.label(text="Display Mode", icon='SHADING_RENDERED')
-            col = display_box.column(align=True)
-            col.prop(props, "display_mode", text="")
+            output_box = props_box.box()
+            output_box.label(text="Output", icon='FILE_FOLDER')
+            col = output_box.column(align=True)
+            col.prop(props, "use_default_output")
+            if props.use_default_output:
+                col.label(text=f"//blast/  {props.file_name}", icon='FILE_BLEND')
+            else:
+                row = col.row(align=True)
+                row.prop(props, "output_path")
+                row.operator("bpl.sync_output_path", text="", icon='FILE_REFRESH')
+                row = col.row(align=True)
+                row.prop(props, "file_name")
+                row.operator("bpl.sync_from_blend_file", text="", icon='FILE_BLEND')
+                row.operator("bpl.sync_file_name", text="", icon='FILE_REFRESH')
+
+            viewport_box = props_box.box()
+            viewport_box.label(text="Viewport", icon='VIEW3D')
+            col = viewport_box.column(align=True)
             col.prop(props, "auto_disable_overlays")
             col.prop(props, "enable_depth_of_field")
-            
-            # 2. Frame Range
+
             frame_range_box = props_box.box()
             frame_range_box.label(text="Frame Range", icon='TIME')
             col = frame_range_box.column(align=True)
             col.prop(props, "use_scene_frame_range")
-            
+
             if not props.use_scene_frame_range:
                 row = col.row(align=True)
                 row.prop(props, "start_frame")
                 row.prop(props, "end_frame")
-            
-            # 3. Resolution
+
             resolution_box = props_box.box()
             resolution_box.label(text="Resolution", icon='TEXTURE')
             col = resolution_box.column(align=True)
             col.prop(props, "resolution_mode", text="")
-            
+
             if props.resolution_mode == 'PRESET':
                 col.prop(props, "resolution_preset", text="")
             elif props.resolution_mode == 'CUSTOM':
                 row = col.row(align=True)
                 row.prop(props, "resolution_x")
                 row.prop(props, "resolution_y")
-            
+
             col.prop(props, "resolution_percentage")
-            
-            # 4. Format
-            format_box = props_box.box()
-            format_box.label(text="Format", icon='FILE_MOVIE')
-            col = format_box.column(align=True)
-            col.prop(props, "video_format", text="")
-            
-            # Custom FFmpeg arguments
+
+            encode_box = props_box.box()
+            encode_box.label(text="Encode Settings", icon='FILE_MOVIE')
+            col = encode_box.column(align=True)
+            row = col.row(align=True)
+            row.prop_enum(props, "video_format", "MPEG4", text=".mp4")
+            row.prop_enum(props, "video_format", "QUICKTIME", text=".mov")
+            row.prop_enum(props, "video_format", "AVI", text=".avi")
+            row.prop_enum(props, "video_format", "MKV", text=".mkv")
+
             col.prop(props, "use_custom_ffmpeg_args")
             if props.use_custom_ffmpeg_args:
                 col.prop(props, "custom_ffmpeg_args", text="")
             else:
                 col.prop(props, "encode_speed", text="Speed")
                 col.prop(props, "video_bitrate_limit", text="Bitrate Limit (Mbps)")
-            
-            col.prop(props, "include_audio")
+
             if props.include_audio:
                 row = col.row(align=True)
                 row.prop(props, "audio_codec", text="")
                 row.prop(props, "audio_bitrate")
-            
-            # 5. Metadata
+
             metadata_box = props_box.box()
             metadata_box.label(text="Metadata", icon='TEXT')
             col = metadata_box.column(align=True)
-            col.prop(props, "show_metadata", text="Show Metadata")
-            
+
             if props.show_metadata:
                 col.prop(props, "metadata_note", text="")
-                
+
                 row = col.row(align=True)
                 row.prop(props, "metadata_date", toggle=True)
                 row.prop(props, "metadata_frame", toggle=True)
                 row.prop(props, "metadata_scene", toggle=True)
-                
+
                 row = col.row(align=True)
                 row.prop(props, "metadata_camera", toggle=True)
                 row.prop(props, "metadata_lens", toggle=True)
                 row.prop(props, "metadata_resolution", toggle=True)
+
+            advanced_box = props_box.box()
+            row = advanced_box.row(align=True)
+            show_advanced = getattr(scene, "basedplayblast_show_advanced", False)
+            row.prop(
+                scene,
+                "basedplayblast_show_advanced",
+                icon="TRIA_DOWN" if show_advanced else "TRIA_RIGHT",
+                icon_only=True,
+                emboss=False,
+            )
+            row.label(text="Advanced")
+            if show_advanced:
+                row = advanced_box.row(align=True)
+                row.scale_y = 1.2
+                row.operator("bpl.apply_blast_settings", text="Apply Blast Render Settings", icon='GREASEPENCIL')
+                row.operator("bpl.restore_original_settings", text="Restore Original Settings", icon='LOOP_BACK')
 
 # Define the addon preferences class
 class BPL_AddonPreferences(AddonPreferences):
@@ -4100,6 +4174,12 @@ class BPL_AddonPreferences(AddonPreferences):
         subtype='FILE_PATH'
     )
 
+    show_flamenco_button: BoolProperty(
+        name="Show Flamenco Button",
+        description="Show the Send to Flamenco button in the playblast panel",
+        default=True,
+    )
+
     use_flamenco_optix_for_cycles: BoolProperty(
         name="Use OPTIX GPU Job for Cycles",
         description="When sending Cycles playblasts to Flamenco, select BasedPlayblast OPTIX GPU job type",
@@ -4123,7 +4203,9 @@ class BPL_AddonPreferences(AddonPreferences):
         box.prop(self, "default_use_custom_ffmpeg_args")
         box.prop(self, "default_ffmpeg_args")
         box.prop(self, "ffmpeg_path", text="FFmpeg Override")
-        box.prop(self, "use_flamenco_optix_for_cycles")
+        box.prop(self, "show_flamenco_button")
+        if self.show_flamenco_button:
+            box.prop(self, "use_flamenco_optix_for_cycles")
 
 def on_load_post(dummy):
     """Applies user defaults after a file is loaded."""
