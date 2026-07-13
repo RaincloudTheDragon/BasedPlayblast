@@ -1945,24 +1945,8 @@ class BPL_OT_create_playblast(Operator):
                 else:
                     self.report({'WARNING'}, "Audio extraction failed. Rendering video without audio.")
             
-            # Now add all encoding options after all inputs
-            if props.use_custom_ffmpeg_args and props.custom_ffmpeg_args:
-                import shlex
-                ffmpeg_cmd.extend(shlex.split(props.custom_ffmpeg_args))
-            else:
-                encoder = encode_utils.detect_video_encoder(ffmpeg_exe)
-                print(f"[BasedPlayblast] Using video encoder: {encoder}")
-                ffmpeg_cmd.extend(encode_utils.build_video_encode_args(
-                    ffmpeg_exe,
-                    encode_speed=props.encode_speed,
-                    bitrate_limit_mbps=props.video_bitrate_limit,
-                ))
-
-            ffmpeg_cmd.extend([
-                "-pix_fmt", "yuv420p",
-            ])
-
-            # Add audio encoding options if audio was added
+            # Tail after video encode args: pixel format, optional audio, output path
+            encode_tail = ["-pix_fmt", "yuv420p"]
             if audio_file and os.path.exists(audio_file):
                 audio_codec_map = {
                     'AAC': 'aac',
@@ -1970,32 +1954,22 @@ class BPL_OT_create_playblast(Operator):
                     'MP3': 'mp3'
                 }
                 audio_codec = audio_codec_map.get(props.audio_codec, 'mp3')
-                ffmpeg_cmd.extend([
+                encode_tail.extend([
                     "-c:a", audio_codec,
                     "-b:a", f"{props.audio_bitrate}k",
-                    "-shortest"  # Ensure video and audio end together
+                    "-shortest",
                 ])
+            encode_tail.append(video_output)
 
-            ffmpeg_cmd.append(video_output)
-            
-            print(f"Converting frames to video...")
-            print(f"Command: {' '.join(ffmpeg_cmd)}")
-            
-            # Run FFmpeg
-            result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
-            
-            if result.returncode == 0:
-                print(f"Video conversion successful: {video_output}")
-                
-                # Clean up temporary audio file if it was created
+            def _cleanup_temp_audio():
                 if audio_file and os.path.exists(audio_file):
                     try:
                         os.remove(audio_file)
                         print(f"Removed temporary audio file: {audio_file}")
                     except Exception as e:
                         print(f"Could not remove temporary audio file {audio_file}: {e}")
-                
-                # Clean up intermediate frame files
+
+            def _cleanup_frames_on_success():
                 if getattr(self, '_frame_temp_dir', None):
                     self._remove_frame_temp_dir()
                 elif frame_dir:
@@ -2009,25 +1983,79 @@ class BPL_OT_create_playblast(Operator):
                             print(f"Removed frame file: {frame_file}")
                         except Exception as e:
                             print(f"Could not remove frame file {frame_file}: {e}")
-                    
+
                     frame_output_dir = os.path.join(output_dir, "frames")
                     if os.path.exists(frame_output_dir):
                         try:
                             if not os.listdir(frame_output_dir):
                                 os.rmdir(frame_output_dir)
-                        except:
+                        except Exception:
                             pass
-                    
+
+            print("Converting frames to video...")
+
+            if props.use_custom_ffmpeg_args and props.custom_ffmpeg_args:
+                import shlex
+                ffmpeg_cmd = list(ffmpeg_cmd)
+                ffmpeg_cmd.extend(shlex.split(props.custom_ffmpeg_args))
+                ffmpeg_cmd.extend(encode_tail)
+                print(f"Command: {' '.join(ffmpeg_cmd)}")
+                result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+                if result.returncode == 0:
+                    print(f"Video conversion successful: {video_output}")
+                    _cleanup_temp_audio()
+                    _cleanup_frames_on_success()
+                else:
+                    print(f"FFmpeg error: {result.stderr}")
+                    _cleanup_temp_audio()
+                    self.report({'ERROR'}, f"Video conversion failed: {result.stderr}")
             else:
-                print(f"FFmpeg error: {result.stderr}")
-                # Clean up temporary audio file even on failure
-                if audio_file and os.path.exists(audio_file):
-                    try:
-                        os.remove(audio_file)
-                        print(f"Removed temporary audio file: {audio_file}")
-                    except Exception as e:
-                        print(f"Could not remove temporary audio file {audio_file}: {e}")
-                self.report({'ERROR'}, f"Video conversion failed: {result.stderr}")
+                # Try NVENC family then libx264 until one succeeds
+                candidates = encode_utils.list_encoder_candidates(ffmpeg_exe)
+                last_stderr = ""
+                encode_ok = False
+                warned_driver = False
+
+                for encoder in candidates:
+                    encode_args = encode_utils.build_video_encode_args_for(
+                        encoder,
+                        encode_speed=props.encode_speed,
+                        bitrate_limit_mbps=props.video_bitrate_limit,
+                    )
+                    attempt_cmd = list(ffmpeg_cmd) + encode_args + encode_tail
+                    print(f"[BasedPlayblast] Using video encoder: {encoder}")
+                    print(f"Command: {' '.join(attempt_cmd)}")
+                    result = subprocess.run(attempt_cmd, capture_output=True, text=True)
+
+                    if result.returncode == 0:
+                        encode_utils.remember_working_encoder(ffmpeg_exe, encoder)
+                        print(f"Video conversion successful: {video_output}")
+                        encode_ok = True
+                        break
+
+                    last_stderr = result.stderr or ""
+                    print(f"FFmpeg error ({encoder}): {last_stderr}")
+
+                    if encode_utils.is_nvenc_driver_error(last_stderr) and not warned_driver:
+                        driver_msg = (
+                            "NVIDIA driver is too old for this FFmpeg's NVENC. "
+                            "Update your GPU drivers. Trying remaining encoders..."
+                        )
+                        print(f"[BasedPlayblast] {driver_msg}")
+                        self.report({'WARNING'}, driver_msg)
+                        warned_driver = True
+                    elif encode_utils.is_nvenc_encoder(encoder):
+                        print(
+                            f"[BasedPlayblast] Encoder {encoder} failed; "
+                            "trying next available encoder..."
+                        )
+
+                if encode_ok:
+                    _cleanup_temp_audio()
+                    _cleanup_frames_on_success()
+                else:
+                    _cleanup_temp_audio()
+                    self.report({'ERROR'}, f"Video conversion failed: {last_stderr}")
                 
         except Exception as e:
             err_msg = str(e)
