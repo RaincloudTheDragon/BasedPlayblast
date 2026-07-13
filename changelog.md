@@ -1,3 +1,11 @@
+# v2.8.1 2026-07-13
+- Encode: fall back through AV1/HEVC/H.264 NVENC on failure; warn when the NVIDIA driver is too old for FFmpeg NVENC
+- Software fallback uses libx264 CRF 1 High (WMP-safe; avoids High 4:4:4 Predictive from CRF 0)
+
+**Internal**
+- Track `*.blend` via Git LFS; keep `tests/` out of release zips
+- Add blast test blend asset
+
 # v2.8.0 2026-07-10
     - UI overhaul: quick-setting rows (shading, audio, metadata), Properties layout, default output toggle, optional Flamenco button
     - Flamenco script deployer: pick Manager directory, validate `flamenco-manager.yaml`, copy scripts to `scripts/`
