@@ -4,9 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag (e.g., v0.2.0)'
-        required: true
+        description: 'Optional override (default: v{version} from blender_manifest.toml)'
+        required: false
         type: string
+        default: ''
 
 jobs:
   build:
@@ -15,42 +16,172 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: pip install toml
-      
+
       - name: Get Version
         id: get_version
+        env:
+          TAG_OVERRIDE: ${{ inputs.release_tag }}
+          ZIP_PREFIX: BasedPlayblast
         run: |
-          VERSION=$(python -c "import toml; print(toml.load('blender_manifest.toml')['version'])")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "zip_name=BasedPlayblast.${{ inputs.release_tag }}.zip" >> $GITHUB_OUTPUT
-      
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          data = tomllib.loads(Path("blender_manifest.toml").read_text(encoding="utf-8"))
+          version = data["version"].strip()
+          bare = version.lstrip("v")
+          override = (os.environ.get("TAG_OVERRIDE") or "").strip()
+          tag = override or f"v{bare}"
+          zip_prefix = os.environ["ZIP_PREFIX"]
+          zip_name = f"{zip_prefix}.v{bare}.zip"
+
+          print(f"version={bare}")
+          print(f"tag={tag}")
+
+          output_file = os.environ.get("GITHUB_OUTPUT") or os.environ.get("GITEA_OUTPUT")
+          with open(output_file, "a", encoding="utf-8") as fh:
+              fh.write(f"version={bare}\n")
+              fh.write(f"tag={tag}\n")
+              fh.write(f"zip_name={zip_name}\n")
+          PY
+
+
+      - name: Extract latest CHANGELOG section
+        id: changelog
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
+          TAG: ${{ steps.get_version.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          tag = os.environ["TAG"]
+
+          changelog_path = None
+          for name in ("CHANGELOG.md", "changelog.md"):
+              p = Path(name)
+              if p.is_file():
+                  changelog_path = p
+                  break
+          if changelog_path is None:
+              raise SystemExit("No CHANGELOG.md / changelog.md found")
+
+          text = changelog_path.read_text(encoding="utf-8")
+          bare = version.lstrip("v")
+          wanted = {version, f"v{version}", bare, f"v{bare}"}
+
+          def emit(section: str, label: str, header: str) -> None:
+              existing = ""
+              # GitHub (gh). Gitea workflows set SKIP_GH_DEDUP=1 and handle API separately.
+              if os.environ.get("SKIP_GH_DEDUP") != "1":
+                  try:
+                      raw = subprocess.check_output(
+                          ["gh", "release", "view", tag, "--json", "body,isDraft"],
+                          text=True,
+                          stderr=subprocess.DEVNULL,
+                      )
+                      data = json.loads(raw)
+                      if data.get("isDraft"):
+                          existing = data.get("body") or ""
+                  except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError):
+                      pass
+
+              if existing and header in existing:
+                  print(f"Draft {tag} already includes {header!r}; not appending again")
+                  Path("RELEASE_NOTES.md").write_text("", encoding="utf-8")
+              else:
+                  print(f"Using CHANGELOG section {label!r} for version {version}")
+                  Path("RELEASE_NOTES.md").write_text(section, encoding="utf-8")
+
+          bracket = list(re.finditer(r"(?m)^## \[([^\]]+)\][^\n]*\n", text))
+          if bracket:
+              chosen = None
+              label = None
+              for i, m in enumerate(bracket):
+                  if m.group(1).strip() in wanted:
+                      start = m.start()
+                      end = bracket[i + 1].start() if i + 1 < len(bracket) else len(text)
+                      chosen = text[start:end].strip() + "\n"
+                      label = m.group(1).strip()
+                      break
+              if chosen is None:
+                  start = bracket[0].start()
+                  end = bracket[1].start() if len(bracket) > 1 else len(text)
+                  chosen = text[start:end].strip() + "\n"
+                  label = bracket[0].group(1).strip()
+                  print(
+                      f"Warning: no CHANGELOG section for version {version}; "
+                      f"using latest entry [{label}]"
+                  )
+              emit(chosen, label, f"## [{label}]")
+          else:
+              heads = list(re.finditer(r"(?m)^# (v?\d+\.\d+(?:\.\d+)?)[^\n]*\n", text))
+              if not heads:
+                  raise SystemExit(f"{changelog_path} has no recognizable version sections")
+              chosen = None
+              label = None
+              header_line = None
+              for i, m in enumerate(heads):
+                  if m.group(1).strip() in wanted:
+                      start = m.start()
+                      end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+                      chosen = text[start:end].strip() + "\n"
+                      label = m.group(1).strip()
+                      header_line = text[m.start() : m.end()].rstrip("\n")
+                      break
+              if chosen is None:
+                  start = heads[0].start()
+                  end = heads[1].start() if len(heads) > 1 else len(text)
+                  chosen = text[start:end].strip() + "\n"
+                  label = heads[0].group(1).strip()
+                  header_line = text[heads[0].start() : heads[0].end()].rstrip("\n")
+                  print(
+                      f"Warning: no CHANGELOG section for version {version}; "
+                      f"using latest entry [{label}]"
+                  )
+              emit(chosen, label, header_line)
+          PY
+
       - name: Create ZIP
         run: |
           # Allowlist only — never bundle tests/, blends, or other dev assets
           mkdir -p addon_files/BasedPlayblast
-          
+
           cp __init__.py rainys_repo_bootstrap.py README.md blender_manifest.toml addon_files/BasedPlayblast/
           cp -r utils addon_files/BasedPlayblast/
-          
+
+          if [ -f "CHANGELOG.md" ]; then
+            cp CHANGELOG.md addon_files/BasedPlayblast/
+          fi
+
           if [ -f "requirements.txt" ]; then
             cp requirements.txt addon_files/BasedPlayblast/
           fi
-          
+
           if [ -d "addon_files/BasedPlayblast/tests" ]; then
             echo "Release bundle must not include tests/" >&2
             exit 1
           fi
-          
+
           cd addon_files
           zip -r "../${{ steps.get_version.outputs.zip_name }}" ./*
-      
+
       - name: Upload Release Asset
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: ${{ steps.get_version.outputs.zip_name }}
-          tag_name: ${{ inputs.release_tag }}
-          draft: true 
+          tag_name: ${{ steps.get_version.outputs.tag }}
+          name: BasedPlayblast ${{ steps.get_version.outputs.version }}
+          draft: true
+          body_path: RELEASE_NOTES.md
+          append_body: true
+
