@@ -4199,6 +4199,18 @@ class BPL_PT_main_panel(Panel):
                 row.operator("bpl.apply_blast_settings", text="Apply Blast Render Settings", icon='GREASEPENCIL')
                 row.operator("bpl.restore_original_settings", text="Restore Original Settings", icon='LOOP_BACK')
 
+
+def _bpl_persist_prefs_sidecar(self=None, context=None):
+    """Write reload-safe prefs sidecar after AddonPreferences changes."""
+    try:
+        from .utils.prefs_sidecar import is_restoring, save_sidecar
+        if is_restoring():
+            return
+        save_sidecar()
+    except Exception:
+        pass
+
+
 # Define the addon preferences class
 class BPL_AddonPreferences(AddonPreferences):
     bl_idname = __name__
@@ -4207,7 +4219,8 @@ class BPL_AddonPreferences(AddonPreferences):
         name="Default Encode Speed",
         description="Default encoder speed preset. NVENC uses VBR with CQ 0.",
         items=ENCODE_SPEED_ITEMS,
-        default='SLOWEST'
+        default='SLOWEST',
+        update=_bpl_persist_prefs_sidecar,
     )
 
     default_video_bitrate_limit: IntProperty(
@@ -4215,7 +4228,8 @@ class BPL_AddonPreferences(AddonPreferences):
         description="Default optional NVENC VBR bitrate cap in Mbps (0 = uncapped)",
         default=0,
         min=0,
-        max=500
+        max=500,
+        update=_bpl_persist_prefs_sidecar,
     )
 
     default_audio_codec: EnumProperty(
@@ -4223,37 +4237,43 @@ class BPL_AddonPreferences(AddonPreferences):
         description="Default audio codec when including audio in playblasts",
         items=AUDIO_CODEC_ITEMS,
         default='MP3',
+        update=_bpl_persist_prefs_sidecar,
     )
 
     default_use_custom_ffmpeg_args: BoolProperty(
         name="Enable Custom FFmpeg By Default",
         description="Sets the default state for 'Use Custom FFmpeg Args' when applying user defaults.",
-        default=False
+        default=False,
+        update=_bpl_persist_prefs_sidecar,
     )
 
     default_ffmpeg_args: StringProperty(
         name="Default FFmpeg Arguments",
         description="Default custom FFmpeg arguments for advanced users.",
-        default="-c:v av1_nvenc -preset p7 -tune hq -rc vbr -rc-lookahead 32 -spatial-aq 1 -aq-strength 15 -cq 0"
+        default="-c:v av1_nvenc -preset p7 -tune hq -rc vbr -rc-lookahead 32 -spatial-aq 1 -aq-strength 15 -cq 0",
+        update=_bpl_persist_prefs_sidecar,
     )
 
     ffmpeg_path: StringProperty(
         name="FFmpeg Path",
         description="Optional override for ffmpeg. Leave blank to use the addon-bundled ffmpeg (auto-downloaded on first use if needed).",
         default="",
-        subtype='FILE_PATH'
+        subtype='FILE_PATH',
+        update=_bpl_persist_prefs_sidecar,
     )
 
     show_flamenco_button: BoolProperty(
         name="Show Flamenco Button",
         description="Show the Send to Flamenco button in the playblast panel",
         default=True,
+        update=_bpl_persist_prefs_sidecar,
     )
 
     use_flamenco_optix_for_cycles: BoolProperty(
         name="Use OPTIX GPU Job for Cycles",
         description="When sending Cycles playblasts to Flamenco, select BasedPlayblast OPTIX GPU job type",
         default=True,
+        update=_bpl_persist_prefs_sidecar,
     )
 
     flamenco_manager_dir: StringProperty(
@@ -4261,13 +4281,15 @@ class BPL_AddonPreferences(AddonPreferences):
         description="Directory containing flamenco-manager.yaml (set via Deploy Flamenco Scripts)",
         default="",
         subtype='DIR_PATH',
+        update=_bpl_persist_prefs_sidecar,
     )
 
     repo_initialized: BoolProperty(
         name="Rainy's Extensions Added",
         description="Internal flag to avoid re-adding Rainy's Extensions repository multiple times.",
         default=False,
-        options={'HIDDEN'}
+        options={'HIDDEN'},
+        update=_bpl_persist_prefs_sidecar,
     )
 
     def draw(self, context):
@@ -4318,6 +4340,11 @@ classes = (
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
+    try:
+        from .utils.prefs_sidecar import restore_sidecar_into_prefs
+        restore_sidecar_into_prefs()
+    except Exception as e:
+        print(f"[BasedPlayblast] Prefs sidecar restore failed: {e}")
     bpy.types.Scene.basedplayblast = PointerProperty(type=BPLProperties)
     
     # Register property for collapsible properties section
@@ -4338,6 +4365,11 @@ def register():
         print(f"[BasedPlayblast] Addon loaded; ffmpeg resolve failed: {exc}")
 
 def unregister():
+    try:
+        from .utils.prefs_sidecar import save_sidecar
+        save_sidecar()
+    except Exception:
+        pass
     # Safely remove handler if it exists
     if on_load_post in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(on_load_post)
